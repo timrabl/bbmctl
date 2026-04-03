@@ -3,6 +3,11 @@ name: Release Binaries
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
 
 permissions:
   contents: write
@@ -16,17 +21,25 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            archive: tar.gz
           - target: x86_64-apple-darwin
             os: macos-latest
-            archive: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            archive: tar.gz
 
     steps:
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -39,10 +52,11 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../bbmctl-${{ github.ref_name }}-${{ matrix.target }}.tar.gz bbmctl
+          tar czf ../../../bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.tar.gz bbmctl
           cd ../../..
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
         with:
-          files: bbmctl-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.tar.gz
