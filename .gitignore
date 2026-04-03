@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+*.swp
+*.swo
+.DS_Store
+.claude/
+*.db
+
+# VSCode — track shared settings, ignore personal
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json

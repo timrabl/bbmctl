@@ -1,0 +1,73 @@
+[workspace]
+changelog_update = true
+dependencies_update = true
+git_release_enable = true
+git_tag_enable = true
+git_release_draft = false
+git_release_latest = true
+semver_check = true
+pr_labels = ["release"]
+git_release_body = """
+## What's Changed
+
+{{ changelog }}
+
+## Installation
+
+### Library (bbm)
+```toml
+[dependencies]
+bbm = "{{ version }}"
+```
+
+### CLI (bbmctl)
+Download the binary for your platform from the assets below.
+
+Or install via Homebrew:
+```bash
+brew install timrabl/tap/bbmctl
+```
+
+## Documentation
+- [API docs](https://docs.rs/bbm/{{ version }})
+- [GitHub](https://github.com/timrabl/bbmctl)
+"""
+
+[[package]]
+name = "bbm"
+changelog_path = "CHANGELOG.md"
+publish = true
+
+[[package]]
+name = "bbmctl"
+publish = false
+release = false
+
+[[package]]
+name = "bbmctl-database"
+publish = false
+release = false
+
+[changelog]
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+trim = true
+sort_commits = "newest"
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Bug Fixes" },
+  { message = "^doc", group = "Documentation" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactor" },
+  { message = "^test", group = "Testing" },
+  { message = "^chore\\(release\\): prepare for", skip = true },
+  { message = "^chore\\(deps.*\\)", skip = true },
+  { message = "^chore", group = "Miscellaneous" },
+  { message = "^ci", group = "CI/CD" },
+]

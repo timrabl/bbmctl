@@ -1,0 +1,66 @@
+name: Prerelease
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  prerelease:
+    name: Create prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test
+        run: cargo test --workspace
+
+      - name: Get version and build number
+        id: version
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "bbm") | .version')
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RC_TAG="v${VERSION}-rc.${SHORT_SHA}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "rc_tag=${RC_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse "${{ steps.version.outputs.rc_tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create prerelease tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git tag ${{ steps.version.outputs.rc_tag }}
+          git push origin ${{ steps.version.outputs.rc_tag }}
+
+      - name: Create GitHub prerelease
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.rc_tag }}
+          name: ${{ steps.version.outputs.rc_tag }}
+          prerelease: true
+          generate_release_notes: true
+          body: |
+            Prerelease from `develop` branch.
+
+            **This is not a stable release.** Use for testing only.
+
+            Install from source:
+            ```bash
+            cargo install --git https://github.com/timrabl/bbmctl --branch develop bbmctl
+            ```
