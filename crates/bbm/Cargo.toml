@@ -1,0 +1,31 @@
+[package]
+name = "bbm"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
+license = "AGPL-3.0"
+description = "Async Rust client library for the German Breitbandmessung (broadband measurement) API"
+homepage = "https://github.com/timrabl/bbmctl"
+repository = "https://github.com/timrabl/bbmctl"
+documentation = "https://docs.rs/bbm"
+readme = "../../README.md"
+keywords = ["breitbandmessung", "speedtest", "broadband", "bundesnetzagentur", "internet"]
+categories = ["api-bindings", "network-programming"]
+rust-version = "1.75"
+exclude = [
+  "docs/*",
+  ".github/*",
+  "target/*",
+  ".vscode/*",
+  ".claude/*",
+]
+
+[dependencies]
+futures = "0.3"
+log = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["net", "time", "sync", "rt", "macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["retry", "util"] }

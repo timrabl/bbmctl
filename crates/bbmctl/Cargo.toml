@@ -1,0 +1,28 @@
+[package]
+name = "bbmctl"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for the Breitbandmessung API"
+authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
+license = "AGPL-3.0"
+publish = false
+
+[dependencies]
+bbm = { path = "../bbm" }
+bbmctl-database = { path = "../bbmctl-database" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+comfy-table = "7"
+csv = "1"
+dirs = "6"
+env_logger = "0.11"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+serde_yml = "0.0.12"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
+
+[dev-dependencies]
+bbmctl-database = { path = "../bbmctl-database", features = ["test-utils"] }
