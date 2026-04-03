@@ -25,10 +25,13 @@ jobs:
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
 
     steps:
       - name: Determine tag
         id: tag
+        shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
@@ -49,14 +52,72 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p bbmctl
 
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.tar.gz bbmctl
           cd ../../..
 
-      - name: Upload release asset
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/bbmctl.exe" -DestinationPath "bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.zip"
+
+      - name: Upload release asset (Unix)
+        if: runner.os != 'Windows'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.tar.gz
+
+      - name: Upload release asset (Windows)
+        if: runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.zip
+
+  deb:
+    name: Build .deb package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release -p bbmctl
+
+      - name: Generate shell completions
+        run: |
+          mkdir -p target/completions
+          ./target/release/bbmctl completions bash > target/completions/bbmctl.bash
+          ./target/release/bbmctl completions fish > target/completions/bbmctl.fish
+          ./target/release/bbmctl completions zsh > target/completions/_bbmctl
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build .deb package
+        run: cargo deb -p bbmctl --no-build
+
+      - name: Upload .deb release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: target/debian/*.deb
