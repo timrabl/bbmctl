@@ -9,7 +9,11 @@ use crate::utils::speed_fmt::{format_speed, FormattedSpeedTestResult, SpeedUnit}
 use bbmctl_database::Database;
 
 /// Returns Ok(true) normally, Ok(false) if campaign test thresholds failed.
-pub async fn run(command: CampaignCommands, config: &ResolvedConfig, db: &Database) -> Result<bool> {
+pub async fn run(
+    command: CampaignCommands,
+    config: &ResolvedConfig,
+    db: &Database,
+) -> Result<bool> {
     match command {
         CampaignCommands::Start(args) => {
             let c = db.campaigns().start(args.provider, &args.plan).await?;
@@ -35,12 +39,13 @@ pub async fn run(command: CampaignCommands, config: &ResolvedConfig, db: &Databa
             output::write_output(&mut writer, &[status], &args.list.format)?;
         }
         CampaignCommands::Add(args) => {
-            let campaign = db
+            let campaign = db.campaigns().active().await?.ok_or_else(|| {
+                anyhow::anyhow!("no active campaign — start one with `campaign start`")
+            })?;
+            let m = db
                 .campaigns()
-                .active()
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("no active campaign — start one with `campaign start`"))?;
-            let m = db.campaigns().record(campaign.id, args.download, args.upload, args.latency).await?;
+                .record(campaign.id, args.download, args.upload, args.latency)
+                .await?;
             info!("recorded campaign measurement #{} at {}", m.id, m.timestamp);
         }
         CampaignCommands::Report(args) => {
@@ -64,11 +69,9 @@ pub async fn run(command: CampaignCommands, config: &ResolvedConfig, db: &Databa
             info!("cancelled campaign #{}", campaign.id);
         }
         CampaignCommands::Test(args) => {
-            let campaign = db
-                .campaigns()
-                .active()
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("no active campaign — start one with `campaign start`"))?;
+            let campaign = db.campaigns().active().await?.ok_or_else(|| {
+                anyhow::anyhow!("no active campaign — start one with `campaign start`")
+            })?;
 
             let config_st = bbm::SpeedTestConfig {
                 duration_secs: args.duration,
@@ -84,12 +87,15 @@ pub async fn run(command: CampaignCommands, config: &ResolvedConfig, db: &Databa
             let runner = bbm::SpeedTestRunner::new(config_st)?;
             let result = runner.run().await?;
 
-            let m = db.campaigns().record(
-                campaign.id,
-                result.download_kbps,
-                result.upload_kbps,
-                result.latency_ms,
-            ).await?;
+            let m = db
+                .campaigns()
+                .record(
+                    campaign.id,
+                    result.download_kbps,
+                    result.upload_kbps,
+                    result.latency_ms,
+                )
+                .await?;
             info!("recorded campaign measurement #{} at {}", m.id, m.timestamp);
 
             // Auto-compare against the campaign's plan
@@ -99,7 +105,9 @@ pub async fn run(command: CampaignCommands, config: &ResolvedConfig, db: &Databa
                 result.download_kbps,
                 result.upload_kbps,
                 &args.unit,
-            ).await {
+            )
+            .await
+            {
                 Ok(passed) => passed,
                 Err(e) => {
                     warn!("could not compare against plan: {e}");
@@ -141,7 +149,9 @@ async fn auto_compare(
     let result = plan.compare(download_kbps, upload_kbps);
 
     // Log download thresholds
-    let dl_checks: Vec<String> = result.results.iter()
+    let dl_checks: Vec<String> = result
+        .results
+        .iter()
         .filter(|r| r.check.starts_with("download"))
         .filter(|r| r.threshold_kbps.is_some())
         .map(|r| {
@@ -158,7 +168,9 @@ async fn auto_compare(
     );
 
     // Log upload thresholds
-    let ul_checks: Vec<String> = result.results.iter()
+    let ul_checks: Vec<String> = result
+        .results
+        .iter()
         .filter(|r| r.check.starts_with("upload"))
         .filter(|r| r.threshold_kbps.is_some())
         .map(|r| {

@@ -124,9 +124,7 @@ impl<'a> MeasurementRepo<'a> {
     }
 
     pub async fn delete_all(&self) -> Result<u64> {
-        let result = measurement::Entity::delete_many()
-            .exec(self.conn)
-            .await?;
+        let result = measurement::Entity::delete_many().exec(self.conn).await?;
         Ok(result.rows_affected)
     }
 
@@ -202,13 +200,15 @@ mod tests {
         let db = Database::connect_in_memory().await.unwrap();
         let repo = db.measurements();
 
-        let m1 = repo.record(100_000.0, 50_000.0, 10.0, None, None)
+        let m1 = repo
+            .record(100_000.0, 50_000.0, 10.0, None, None)
             .await
             .unwrap();
         assert!((m1.download_kbps - 100_000.0).abs() < f64::EPSILON);
         assert!(m1.provider_id.is_none());
 
-        let m2 = repo.record(200_000.0, 80_000.0, 15.0, Some(1), Some("basic"))
+        let m2 = repo
+            .record(200_000.0, 80_000.0, 15.0, Some(1), Some("basic"))
             .await
             .unwrap();
         assert!((m2.download_kbps - 200_000.0).abs() < f64::EPSILON);
@@ -271,7 +271,8 @@ mod tests {
         let db = Database::connect_in_memory().await.unwrap();
         let repo = db.measurements();
 
-        let model = repo.record(100_000.0, 50_000.0, 10.0, None, None)
+        let model = repo
+            .record(100_000.0, 50_000.0, 10.0, None, None)
             .await
             .unwrap();
 

@@ -15,7 +15,9 @@ pub async fn run(args: CompareArgs, config: &ResolvedConfig, db: &Database) -> R
     } else if args.test || (args.download.is_none() && args.upload.is_none()) {
         // Run a speed test
         let config_st = bbm::SpeedTestConfig {
-            peer: config.peer.clone()
+            peer: config
+                .peer
+                .clone()
                 .unwrap_or_else(|| bbm::SpeedTestConfig::DEFAULT_PEER.to_string()),
             ..Default::default()
         };
@@ -24,13 +26,16 @@ pub async fn run(args: CompareArgs, config: &ResolvedConfig, db: &Database) -> R
 
         // Record if provider is available
         if let Some(provider) = config.provider {
-            let m = db.measurements().record(
-                result.download_kbps,
-                result.upload_kbps,
-                result.latency_ms,
-                Some(provider),
-                config.plan.as_deref(),
-            ).await?;
+            let m = db
+                .measurements()
+                .record(
+                    result.download_kbps,
+                    result.upload_kbps,
+                    result.latency_ms,
+                    Some(provider),
+                    config.plan.as_deref(),
+                )
+                .await?;
             info!("recorded measurement #{} at {}", m.id, m.timestamp);
         }
 

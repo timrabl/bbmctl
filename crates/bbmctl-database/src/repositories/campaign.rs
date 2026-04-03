@@ -333,11 +333,7 @@ impl<'a> CampaignRepo<'a> {
         })
     }
 
-    async fn check_timing(
-        &self,
-        campaign_id: i64,
-        now: &DateTime<Utc>,
-    ) -> Result<Vec<String>> {
+    async fn check_timing(&self, campaign_id: i64, now: &DateTime<Utc>) -> Result<Vec<String>> {
         let mut warnings = Vec::new();
         let today = now.format("%Y-%m-%d").to_string();
 
@@ -388,11 +384,8 @@ impl<'a> CampaignRepo<'a> {
 
     async fn measurement_count(&self, campaign_id: i64) -> Result<u64> {
         let sql = "SELECT COUNT(*) FROM measurements WHERE campaign_id = ?1";
-        let stmt = Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            sql,
-            [campaign_id.into()],
-        );
+        let stmt =
+            Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, [campaign_id.into()]);
         let row = self
             .conn
             .query_one_raw(stmt)
@@ -403,13 +396,9 @@ impl<'a> CampaignRepo<'a> {
     }
 
     async fn days_spanned(&self, campaign_id: i64) -> Result<u64> {
-        let sql =
-            "SELECT COUNT(DISTINCT DATE(timestamp)) FROM measurements WHERE campaign_id = ?1";
-        let stmt = Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            sql,
-            [campaign_id.into()],
-        );
+        let sql = "SELECT COUNT(DISTINCT DATE(timestamp)) FROM measurements WHERE campaign_id = ?1";
+        let stmt =
+            Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, [campaign_id.into()]);
         let row = self
             .conn
             .query_one_raw(stmt)

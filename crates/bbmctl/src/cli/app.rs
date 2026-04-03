@@ -2,8 +2,8 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 use super::{
-    CampaignCommands, CompareArgs, ExportCommands, HistoryCommands, ListCommands,
-    ProviderCommands, ReportCommands, TestArgs,
+    CampaignCommands, CompareArgs, ExportCommands, HistoryCommands, ListCommands, ProviderCommands,
+    ReportCommands, TestArgs,
 };
 
 #[derive(Parser)]

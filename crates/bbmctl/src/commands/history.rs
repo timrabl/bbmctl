@@ -10,15 +10,19 @@ use bbmctl_database::Database;
 pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Database) -> Result<()> {
     match command {
         HistoryCommands::Add(args) => {
-            let provider = args.provider.or(config.provider)
-                .ok_or_else(|| anyhow::anyhow!("--provider is required (set it in config or pass explicitly)"))?;
-            let m = db.measurements().record(
-                args.download,
-                args.upload,
-                args.latency,
-                Some(provider),
-                args.plan.as_deref().or(config.plan.as_deref()),
-            ).await?;
+            let provider = args.provider.or(config.provider).ok_or_else(|| {
+                anyhow::anyhow!("--provider is required (set it in config or pass explicitly)")
+            })?;
+            let m = db
+                .measurements()
+                .record(
+                    args.download,
+                    args.upload,
+                    args.latency,
+                    Some(provider),
+                    args.plan.as_deref().or(config.plan.as_deref()),
+                )
+                .await?;
             info!("recorded measurement #{} at {}", m.id, m.timestamp);
         }
         HistoryCommands::List(args) => {
@@ -26,17 +30,15 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
             let mut writer = make_writer(&args.list)?;
             output::write_output(&mut writer, &measurements, &args.list.format)?;
         }
-        HistoryCommands::Summary(args) => {
-            match db.measurements().summary().await? {
-                Some(summary) => {
-                    let mut writer = make_writer(&args.list)?;
-                    output::write_output(&mut writer, &[summary], &args.list.format)?;
-                }
-                None => {
-                    info!("no measurements recorded yet");
-                }
+        HistoryCommands::Summary(args) => match db.measurements().summary().await? {
+            Some(summary) => {
+                let mut writer = make_writer(&args.list)?;
+                output::write_output(&mut writer, &[summary], &args.list.format)?;
             }
-        }
+            None => {
+                info!("no measurements recorded yet");
+            }
+        },
         HistoryCommands::Delete(args) => {
             if args.all {
                 if !args.confirm {
@@ -72,7 +74,14 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
                 None => Box::new(std::io::stdout().lock()),
             };
             let mut wtr = csv::Writer::from_writer(writer);
-            wtr.write_record(["timestamp", "download_kbps", "upload_kbps", "latency_ms", "provider_id", "plan_id"])?;
+            wtr.write_record([
+                "timestamp",
+                "download_kbps",
+                "upload_kbps",
+                "latency_ms",
+                "provider_id",
+                "plan_id",
+            ])?;
             for m in &measurements {
                 wtr.write_record([
                     &m.timestamp,
@@ -95,10 +104,25 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
                 let download_kbps: f64 = record.get(1).unwrap_or("0").parse()?;
                 let upload_kbps: f64 = record.get(2).unwrap_or("0").parse()?;
                 let latency_ms: f64 = record.get(3).unwrap_or("0").parse()?;
-                let provider_id: Option<i64> = record.get(4).and_then(|s| if s.is_empty() { None } else { s.parse().ok() });
-                let plan_id: Option<&str> = record.get(5).and_then(|s| if s.is_empty() { None } else { Some(s) });
+                let provider_id: Option<i64> =
+                    record
+                        .get(4)
+                        .and_then(|s| if s.is_empty() { None } else { s.parse().ok() });
+                let plan_id: Option<&str> =
+                    record
+                        .get(5)
+                        .and_then(|s| if s.is_empty() { None } else { Some(s) });
 
-                db.measurements().record_with_timestamp(timestamp, download_kbps, upload_kbps, latency_ms, provider_id, plan_id).await?;
+                db.measurements()
+                    .record_with_timestamp(
+                        timestamp,
+                        download_kbps,
+                        upload_kbps,
+                        latency_ms,
+                        provider_id,
+                        plan_id,
+                    )
+                    .await?;
                 count += 1;
             }
             info!("imported {count} measurements");
@@ -126,7 +150,12 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
             let upload_kbps: Vec<f64> = measurements.iter().map(|m| m.upload_kbps).collect();
             let latency_ms: Vec<f64> = measurements.iter().map(|m| m.latency_ms).collect();
 
-            let output = crate::utils::output::render_trend(&download_kbps, &upload_kbps, &latency_ms, &args.unit);
+            let output = crate::utils::output::render_trend(
+                &download_kbps,
+                &upload_kbps,
+                &latency_ms,
+                &args.unit,
+            );
             print!("{output}");
         }
     }

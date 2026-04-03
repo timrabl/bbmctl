@@ -1,8 +1,8 @@
-use std::collections::BTreeSet;
-use std::io::Write;
 use anyhow::{Context, Result};
 use comfy_table::{Row, Table};
 use serde::Serialize;
+use std::collections::BTreeSet;
+use std::io::Write;
 
 pub fn write_table<T: Serialize>(writer: &mut dyn Write, data: &[T]) -> Result<()> {
     if data.is_empty() {

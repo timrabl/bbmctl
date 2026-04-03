@@ -18,7 +18,11 @@ impl MigrationTrait for Migration {
                             .auto_increment()
                             .primary_key(),
                     )
-                    .col(ColumnDef::new(Campaigns::ProviderId).big_integer().not_null())
+                    .col(
+                        ColumnDef::new(Campaigns::ProviderId)
+                            .big_integer()
+                            .not_null(),
+                    )
                     .col(ColumnDef::new(Campaigns::PlanId).string().not_null())
                     .col(ColumnDef::new(Campaigns::StartedAt).string().not_null())
                     .col(
@@ -49,19 +53,19 @@ impl MigrationTrait for Migration {
                             .double()
                             .not_null(),
                     )
+                    .col(ColumnDef::new(Measurements::UploadKbps).double().not_null())
+                    .col(ColumnDef::new(Measurements::LatencyMs).double().not_null())
                     .col(
-                        ColumnDef::new(Measurements::UploadKbps)
-                            .double()
-                            .not_null(),
+                        ColumnDef::new(Measurements::ProviderId)
+                            .big_integer()
+                            .null(),
                     )
-                    .col(
-                        ColumnDef::new(Measurements::LatencyMs)
-                            .double()
-                            .not_null(),
-                    )
-                    .col(ColumnDef::new(Measurements::ProviderId).big_integer().null())
                     .col(ColumnDef::new(Measurements::PlanId).string().null())
-                    .col(ColumnDef::new(Measurements::CampaignId).big_integer().null())
+                    .col(
+                        ColumnDef::new(Measurements::CampaignId)
+                            .big_integer()
+                            .null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_measurements_campaign_id")

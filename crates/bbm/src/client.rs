@@ -30,7 +30,8 @@ struct ApiService {
 impl Service<ApiRequest> for ApiService {
     type Response = reqwest::Response;
     type Error = BbmError;
-    type Future = Pin<Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>>;
+    type Future =
+        Pin<Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -90,9 +91,7 @@ impl BbmClient {
 
         let status = response.status();
         if !status.is_success() {
-            return Err(BbmError::Api(format!(
-                "{path} returned HTTP {status}"
-            )));
+            return Err(BbmError::Api(format!("{path} returned HTTP {status}")));
         }
 
         let content_type = response
@@ -131,7 +130,8 @@ impl BbmClient {
 
     /// Fetch plans for a specific provider.
     pub async fn get_plans_by_provider_id(&self, provider_id: i64) -> Result<Vec<Plan>> {
-        self.get_json(&format!("/api/plans_desktop/{provider_id}")).await
+        self.get_json(&format!("/api/plans_desktop/{provider_id}"))
+            .await
     }
 
     // -- Speed API --

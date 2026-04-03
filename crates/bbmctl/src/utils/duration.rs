@@ -51,10 +51,18 @@ pub fn format_duration(d: Duration) -> String {
     let secs = total % 60;
 
     let mut parts = Vec::new();
-    if days > 0 { parts.push(format!("{days}d")); }
-    if hours > 0 { parts.push(format!("{hours}h")); }
-    if mins > 0 { parts.push(format!("{mins}m")); }
-    if secs > 0 { parts.push(format!("{secs}s")); }
+    if days > 0 {
+        parts.push(format!("{days}d"));
+    }
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if mins > 0 {
+        parts.push(format!("{mins}m"));
+    }
+    if secs > 0 {
+        parts.push(format!("{secs}s"));
+    }
     parts.join("")
 }
 
@@ -85,7 +93,10 @@ mod tests {
     #[test]
     fn parse_combined() {
         assert_eq!(parse_duration("1h30m").unwrap(), Duration::from_secs(5400));
-        assert_eq!(parse_duration("2h30m45s").unwrap(), Duration::from_secs(9045));
+        assert_eq!(
+            parse_duration("2h30m45s").unwrap(),
+            Duration::from_secs(9045)
+        );
     }
 
     #[test]

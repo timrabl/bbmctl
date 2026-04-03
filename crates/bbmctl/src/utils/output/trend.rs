@@ -45,7 +45,10 @@ pub fn render_trend(
     let dl_spark = sparkline(download_kbps);
     let dl_avg = download_kbps.iter().sum::<f64>() / n as f64;
     let dl_min = download_kbps.iter().cloned().fold(f64::INFINITY, f64::min);
-    let dl_max = download_kbps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let dl_max = download_kbps
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     out.push_str(&format!(
         "download: {dl_spark}  avg: {}  min: {}  max: {}\n",
         format_speed(dl_avg, unit),
@@ -57,7 +60,10 @@ pub fn render_trend(
     let ul_spark = sparkline(upload_kbps);
     let ul_avg = upload_kbps.iter().sum::<f64>() / n as f64;
     let ul_min = upload_kbps.iter().cloned().fold(f64::INFINITY, f64::min);
-    let ul_max = upload_kbps.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let ul_max = upload_kbps
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max);
     out.push_str(&format!(
         "upload:   {ul_spark}  avg: {}  min: {}  max: {}\n",
         format_speed(ul_avg, unit),

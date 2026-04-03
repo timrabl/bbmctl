@@ -37,7 +37,8 @@ impl Database {
             .await
             .with_context(|| format!("could not connect to database: {}", db_path.display()))?;
 
-        Migrator::up(&conn, None).await
+        Migrator::up(&conn, None)
+            .await
             .context("database migration failed")?;
 
         Ok(Self { conn })
@@ -50,7 +51,8 @@ impl Database {
             .await
             .context("could not open in-memory database")?;
 
-        Migrator::up(&conn, None).await
+        Migrator::up(&conn, None)
+            .await
             .context("database migration failed")?;
 
         Ok(Self { conn })

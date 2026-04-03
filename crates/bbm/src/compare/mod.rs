@@ -12,7 +12,14 @@ mod tests {
     use crate::intstr::InconsistentIntegerString as IIS;
     use crate::plan::Plan;
 
-    fn make_plan(min_dl: &str, norm_dl: &str, max_dl: &str, min_ul: &str, norm_ul: &str, max_ul: &str) -> Plan {
+    fn make_plan(
+        min_dl: &str,
+        norm_dl: &str,
+        max_dl: &str,
+        min_ul: &str,
+        norm_ul: &str,
+        max_ul: &str,
+    ) -> Plan {
         Plan {
             plan_id: IIS("1".into()),
             plan_db_version: IIS("1".into()),
@@ -52,8 +59,8 @@ mod tests {
         let result = plan.compare(90_000.0, 30_000.0);
         assert!(!result.all_met);
 
-        assert!(result.results[0].met);  // >= min
-        assert!(result.results[1].met);  // >= normal
+        assert!(result.results[0].met); // >= min
+        assert!(result.results[1].met); // >= normal
         assert!(!result.results[2].met); // >= max
     }
 

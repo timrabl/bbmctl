@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::intstr::InconsistentIntegerString;
 use crate::compare::{ComparisonResult, ThresholdResult};
+use crate::intstr::InconsistentIntegerString;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plan {
@@ -56,7 +56,11 @@ impl Plan {
     pub fn compare(&self, download_kbps: f64, upload_kbps: f64) -> ComparisonResult {
         let results = vec![
             ThresholdResult::check("download >= min", download_kbps, self.min_download_kbps()),
-            ThresholdResult::check("download >= normal", download_kbps, self.norm_download_kbps()),
+            ThresholdResult::check(
+                "download >= normal",
+                download_kbps,
+                self.norm_download_kbps(),
+            ),
             ThresholdResult::check("download >= max", download_kbps, self.max_download_kbps()),
             ThresholdResult::check("upload >= min", upload_kbps, self.min_upload_kbps()),
             ThresholdResult::check("upload >= normal", upload_kbps, self.norm_upload_kbps()),

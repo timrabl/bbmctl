@@ -1,6 +1,6 @@
-use std::io::Write;
 use anyhow::Result;
 use serde::Serialize;
+use std::io::Write;
 
 pub fn write_csv<T: Serialize>(writer: &mut dyn Write, data: &[T], headers: bool) -> Result<()> {
     let mut wtr = csv::WriterBuilder::new()

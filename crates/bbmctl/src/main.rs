@@ -5,19 +5,20 @@ mod prometheus;
 mod utils;
 
 use anyhow::Result;
+use bbmctl_database::Database;
 use clap::Parser;
 use cli::{Cli, Commands};
 use config::ConfigFile;
-use bbmctl_database::Database;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,sqlx=warn,sea_orm=warn,sea_orm_migration=warn"),
+        env_logger::Env::default()
+            .default_filter_or("info,sqlx=warn,sea_orm=warn,sea_orm_migration=warn"),
     )
-        .format_target(false)
-        .format_timestamp(None)
-        .init();
+    .format_target(false)
+    .format_timestamp(None)
+    .init();
 
     let cli = Cli::parse();
 

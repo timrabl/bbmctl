@@ -149,9 +149,7 @@ impl SpeedTestRunner {
 
         let elapsed = start.elapsed().as_secs_f64();
         if elapsed < 0.1 {
-            return Err(BbmError::TestFailed(
-                "upload measurement too short".into(),
-            ));
+            return Err(BbmError::TestFailed("upload measurement too short".into()));
         }
 
         let bytes = total_bytes.load(Ordering::Relaxed);

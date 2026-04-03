@@ -4,10 +4,10 @@ mod table;
 mod trend;
 mod yaml;
 
-use std::io::Write;
+use crate::cli::OutputFormat;
 use anyhow::Result;
 use serde::Serialize;
-use crate::cli::OutputFormat;
+use std::io::Write;
 
 pub use trend::render_trend;
 

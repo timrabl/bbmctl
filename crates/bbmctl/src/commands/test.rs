@@ -33,15 +33,19 @@ async fn run_once(args: &TestArgs, config: &ResolvedConfig, db: &Database) -> Re
     let result = runner.run().await?;
 
     if args.record || args.every.is_some() {
-        let provider = args.provider.or(config.provider)
-            .ok_or_else(|| anyhow::anyhow!("--provider is required (set it in config or pass explicitly)"))?;
-        let m = db.measurements().record(
-            result.download_kbps,
-            result.upload_kbps,
-            result.latency_ms,
-            Some(provider),
-            args.plan.as_deref().or(config.plan.as_deref()),
-        ).await?;
+        let provider = args.provider.or(config.provider).ok_or_else(|| {
+            anyhow::anyhow!("--provider is required (set it in config or pass explicitly)")
+        })?;
+        let m = db
+            .measurements()
+            .record(
+                result.download_kbps,
+                result.upload_kbps,
+                result.latency_ms,
+                Some(provider),
+                args.plan.as_deref().or(config.plan.as_deref()),
+            )
+            .await?;
         info!("recorded measurement #{} at {}", m.id, m.timestamp);
     }
 
@@ -52,13 +56,21 @@ async fn run_once(args: &TestArgs, config: &ResolvedConfig, db: &Database) -> Re
     Ok(())
 }
 
-async fn run_scheduled(args: TestArgs, config: &ResolvedConfig, db: &Database, every: &str) -> Result<()> {
+async fn run_scheduled(
+    args: TestArgs,
+    config: &ResolvedConfig,
+    db: &Database,
+    every: &str,
+) -> Result<()> {
     let interval = duration::parse_duration(every)?;
     let interval_display = duration::format_duration(interval);
 
     // --every implies recording, so provider is required
-    let provider = args.provider.or(config.provider)
-        .ok_or_else(|| anyhow::anyhow!("--provider is required for scheduled tests (set it in config or pass explicitly)"))?;
+    let provider = args.provider.or(config.provider).ok_or_else(|| {
+        anyhow::anyhow!(
+            "--provider is required for scheduled tests (set it in config or pass explicitly)"
+        )
+    })?;
 
     info!("running speed tests every {interval_display} (Ctrl+C to stop)");
 
@@ -81,13 +93,16 @@ async fn run_scheduled(args: TestArgs, config: &ResolvedConfig, db: &Database, e
         let runner = bbm::SpeedTestRunner::new(config_st)?;
         let result = runner.run().await?;
 
-        let m = db.measurements().record(
-            result.download_kbps,
-            result.upload_kbps,
-            result.latency_ms,
-            Some(provider),
-            args.plan.as_deref().or(config.plan.as_deref()),
-        ).await?;
+        let m = db
+            .measurements()
+            .record(
+                result.download_kbps,
+                result.upload_kbps,
+                result.latency_ms,
+                Some(provider),
+                args.plan.as_deref().or(config.plan.as_deref()),
+            )
+            .await?;
         info!("recorded measurement #{} at {}", m.id, m.timestamp);
 
         let formatted = FormattedSpeedTestResult::from_result(&result, &args.unit);

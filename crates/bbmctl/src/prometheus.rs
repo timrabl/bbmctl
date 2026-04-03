@@ -11,41 +11,72 @@ async fn render_metrics(db: &Database) -> Result<String> {
     let mut out = String::new();
 
     if let Some(m) = db.measurements().history(Some(1)).await?.into_iter().next() {
-        writeln!(out, "# HELP speedtest_download_kbps Latest download speed in kbit/s")?;
+        writeln!(
+            out,
+            "# HELP speedtest_download_kbps Latest download speed in kbit/s"
+        )?;
         writeln!(out, "# TYPE speedtest_download_kbps gauge")?;
         writeln!(out, "speedtest_download_kbps {}", m.download_kbps)?;
 
-        writeln!(out, "# HELP speedtest_upload_kbps Latest upload speed in kbit/s")?;
+        writeln!(
+            out,
+            "# HELP speedtest_upload_kbps Latest upload speed in kbit/s"
+        )?;
         writeln!(out, "# TYPE speedtest_upload_kbps gauge")?;
         writeln!(out, "speedtest_upload_kbps {}", m.upload_kbps)?;
 
-        writeln!(out, "# HELP speedtest_latency_ms Latest latency in milliseconds")?;
+        writeln!(
+            out,
+            "# HELP speedtest_latency_ms Latest latency in milliseconds"
+        )?;
         writeln!(out, "# TYPE speedtest_latency_ms gauge")?;
         writeln!(out, "speedtest_latency_ms {}", m.latency_ms)?;
 
-        writeln!(out, "# HELP speedtest_download_mbps Latest download speed in Mbit/s")?;
+        writeln!(
+            out,
+            "# HELP speedtest_download_mbps Latest download speed in Mbit/s"
+        )?;
         writeln!(out, "# TYPE speedtest_download_mbps gauge")?;
-        writeln!(out, "speedtest_download_mbps {:.2}", m.download_kbps / 1000.0)?;
+        writeln!(
+            out,
+            "speedtest_download_mbps {:.2}",
+            m.download_kbps / 1000.0
+        )?;
 
-        writeln!(out, "# HELP speedtest_upload_mbps Latest upload speed in Mbit/s")?;
+        writeln!(
+            out,
+            "# HELP speedtest_upload_mbps Latest upload speed in Mbit/s"
+        )?;
         writeln!(out, "# TYPE speedtest_upload_mbps gauge")?;
         writeln!(out, "speedtest_upload_mbps {:.2}", m.upload_kbps / 1000.0)?;
     }
 
     if let Some(s) = db.measurements().summary().await? {
-        writeln!(out, "# HELP speedtest_measurements_total Total number of recorded measurements")?;
+        writeln!(
+            out,
+            "# HELP speedtest_measurements_total Total number of recorded measurements"
+        )?;
         writeln!(out, "# TYPE speedtest_measurements_total counter")?;
         writeln!(out, "speedtest_measurements_total {}", s.count)?;
 
-        writeln!(out, "# HELP speedtest_avg_download_kbps Average download speed in kbit/s")?;
+        writeln!(
+            out,
+            "# HELP speedtest_avg_download_kbps Average download speed in kbit/s"
+        )?;
         writeln!(out, "# TYPE speedtest_avg_download_kbps gauge")?;
         writeln!(out, "speedtest_avg_download_kbps {}", s.avg_download_kbps)?;
 
-        writeln!(out, "# HELP speedtest_avg_upload_kbps Average upload speed in kbit/s")?;
+        writeln!(
+            out,
+            "# HELP speedtest_avg_upload_kbps Average upload speed in kbit/s"
+        )?;
         writeln!(out, "# TYPE speedtest_avg_upload_kbps gauge")?;
         writeln!(out, "speedtest_avg_upload_kbps {}", s.avg_upload_kbps)?;
 
-        writeln!(out, "# HELP speedtest_avg_latency_ms Average latency in milliseconds")?;
+        writeln!(
+            out,
+            "# HELP speedtest_avg_latency_ms Average latency in milliseconds"
+        )?;
         writeln!(out, "# TYPE speedtest_avg_latency_ms gauge")?;
         writeln!(out, "speedtest_avg_latency_ms {}", s.avg_latency_ms)?;
     }
@@ -141,7 +172,10 @@ mod tests {
     #[tokio::test]
     async fn render_with_data() {
         let db = Database::connect_in_memory().await.unwrap();
-        db.measurements().record(100_000.0, 50_000.0, 12.5, None, None).await.unwrap();
+        db.measurements()
+            .record(100_000.0, 50_000.0, 12.5, None, None)
+            .await
+            .unwrap();
 
         let metrics = render_metrics(&db).await.unwrap();
         assert!(metrics.contains("speedtest_download_kbps 100000"));
