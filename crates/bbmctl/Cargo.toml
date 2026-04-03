@@ -24,5 +24,20 @@ chrono = { version = "0.4", features = ["serde"] }
 serde_yaml_ng = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
 
+[package.metadata.deb]
+maintainer = "Tim Oliver Rabl <contact@timrabl.de>"
+copyright = "2023-2026 Tim Oliver Rabl"
+license-file = ["../../LICENSE"]
+extended-description = "CLI for the German Breitbandmessung broadband measurement API by Bundesnetzagentur"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/bbmctl", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/bbmctl/README.md", "644"],
+    ["target/completions/bbmctl.bash", "usr/share/bash-completion/completions/bbmctl", "644"],
+    ["target/completions/bbmctl.fish", "usr/share/fish/vendor_completions.d/bbmctl.fish", "644"],
+    ["target/completions/_bbmctl", "usr/share/zsh/vendor-completions/_bbmctl", "644"],
+]
+
 [dev-dependencies]
 bbmctl-database = { path = "../bbmctl-database", features = ["test-utils"] }

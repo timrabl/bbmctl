@@ -23,9 +23,21 @@ bbm = "{{ version }}"
 ### CLI (bbmctl)
 Download the binary for your platform from the assets below.
 
-Or install via Homebrew:
+#### Homebrew (macOS/Linux)
 ```bash
 brew install timrabl/tap/bbmctl
+```
+
+#### Debian/Ubuntu
+```bash
+# Download the .deb from the release assets, then:
+sudo dpkg -i bbmctl_{{ version }}-1_amd64.deb
+```
+
+#### Scoop (Windows)
+```powershell
+scoop bucket add timrabl https://github.com/timrabl/scoop-bucket
+scoop install bbmctl
 ```
 
 ## Documentation
