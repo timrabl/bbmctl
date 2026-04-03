@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "CLI tool for the Breitbandmessung API"
 authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
-license = "AGPL-3.0"
+license = "MIT"
 publish = false
 
 [dependencies]

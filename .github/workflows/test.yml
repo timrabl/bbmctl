@@ -52,6 +52,21 @@ jobs:
       - name: Run rustfmt
         run: cargo fmt --all -- --check
 
+  license-headers:
+    name: License Headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Install addlicense
+        run: go install github.com/google/addlicense@latest
+      - name: Check license headers
+        run: find crates -name "*.rs" -exec addlicense -check -l mit -c "Tim Oliver Rabl" -y "2023-2026" {} +
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

@@ -4,7 +4,7 @@ Async Rust client library and CLI for the German [Breitbandmessung](https://brei
 
 [![Test](https://github.com/timrabl/bbmctl/actions/workflows/test.yml/badge.svg)](https://github.com/timrabl/bbmctl/actions/workflows/test.yml)
 [![Crates.io](https://img.shields.io/crates/v/bbm.svg)](https://crates.io/crates/bbm)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Background
 
@@ -153,7 +153,7 @@ Use profiles with `--profile office`.
 
 ## License
 
-This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+This project is licensed under the [MIT License](LICENSE).
 
 ## Links
 
