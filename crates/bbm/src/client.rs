@@ -1,0 +1,168 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use reqwest::Client;
+use tower::retry::Retry;
+use tower::Service;
+
+use crate::error::{BbmError, Result};
+use crate::plan::Plan;
+use crate::provider::Provider;
+use crate::report::AnnualReportSummary;
+use crate::retry::RetryPolicy;
+use crate::speed::Speed;
+
+const DEFAULT_BASE_URL: &str = "https://breitbandmessung.de";
+
+/// A request to the API: just a full URL.
+#[derive(Debug, Clone)]
+struct ApiRequest {
+    url: String,
+}
+
+/// Internal tower service that performs an async GET and returns the response bytes.
+#[derive(Clone)]
+struct ApiService {
+    http: Client,
+}
+
+impl Service<ApiRequest> for ApiService {
+    type Response = reqwest::Response;
+    type Error = BbmError;
+    type Future = Pin<Box<dyn Future<Output = std::result::Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: ApiRequest) -> Self::Future {
+        let client = self.http.clone();
+        Box::pin(async move {
+            let response = client
+                .get(&req.url)
+                .header("Accept", "application/json")
+                .send()
+                .await?;
+            Ok(response)
+        })
+    }
+}
+
+/// Client for the Breitbandmessung API.
+pub struct BbmClient {
+    http: Client,
+    base_url: String,
+    retry_policy: RetryPolicy,
+}
+
+impl BbmClient {
+    /// Create a new client with the default base URL.
+    pub fn new() -> Self {
+        Self::with_base_url(DEFAULT_BASE_URL)
+    }
+
+    /// Create a new client with a custom base URL (useful for testing).
+    pub fn with_base_url(base_url: &str) -> Self {
+        Self {
+            http: Client::new(),
+            base_url: base_url.trim_end_matches('/').to_owned(),
+            retry_policy: RetryPolicy::default(),
+        }
+    }
+
+    /// Set a custom retry policy.
+    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry_policy = policy;
+        self
+    }
+
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let url = format!("{}{}", self.base_url, path);
+
+        let svc = ApiService {
+            http: self.http.clone(),
+        };
+        let mut retry_svc = Retry::new(self.retry_policy.clone(), svc);
+
+        let request = ApiRequest { url };
+        let response = retry_svc.call(request).await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(BbmError::Api(format!(
+                "{path} returned HTTP {status}"
+            )));
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_owned();
+
+        if !content_type.contains("application/json") {
+            let body = response.text().await.unwrap_or_default();
+            let preview = &body[..body.len().min(200)];
+            return Err(BbmError::Api(format!(
+                "{path} returned non-JSON response (Content-Type: {content_type}): {preview}"
+            )));
+        }
+
+        let bytes = response.bytes().await?;
+        let value = serde_json::from_slice(&bytes)?;
+        Ok(value)
+    }
+
+    // -- Provider API --
+
+    /// Fetch all providers.
+    pub async fn get_providers(&self) -> Result<Vec<Provider>> {
+        self.get_json("/api/provider").await
+    }
+
+    /// Fetch a single provider by ID.
+    pub async fn get_provider_by_id(&self, id: i64) -> Result<Provider> {
+        self.get_json(&format!("/api/provider/{id}")).await
+    }
+
+    // -- Plan API --
+
+    /// Fetch plans for a specific provider.
+    pub async fn get_plans_by_provider_id(&self, provider_id: i64) -> Result<Vec<Plan>> {
+        self.get_json(&format!("/api/plans_desktop/{provider_id}")).await
+    }
+
+    // -- Speed API --
+
+    /// Fetch all speeds.
+    pub async fn get_speeds(&self) -> Result<Vec<Speed>> {
+        self.get_json("/api/speed").await
+    }
+
+    /// Fetch speeds for a specific provider.
+    pub async fn get_speeds_by_provider_id(&self, id: i64) -> Result<Vec<Speed>> {
+        self.get_json(&format!("/api/speed/{id}")).await
+    }
+
+    // -- Statistics API --
+
+    /// Fetch live statistics as raw JSON.
+    pub async fn get_statistics(&self) -> Result<serde_json::Value> {
+        self.get_json("/api/statistics").await
+    }
+
+    // -- Report data --
+
+    /// Reference data from published BNetzA annual reports (static, not from the API).
+    pub fn annual_reports() -> Vec<AnnualReportSummary> {
+        crate::report::annual_reports()
+    }
+}
+
+impl Default for BbmClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}

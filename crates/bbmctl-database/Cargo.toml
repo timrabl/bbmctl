@@ -1,0 +1,22 @@
+[package]
+name = "bbmctl-database"
+version = "0.1.0"
+edition = "2021"
+description = "Database layer for bbmctl (SeaORM + SQLite)"
+authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
+license = "AGPL-3.0"
+publish = false
+
+[features]
+test-utils = []
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6"
+log = "0.4"
+sea-orm = { version = "=2.0.0-rc.37", default-features = false, features = ["macros", "sqlx-sqlite", "with-chrono", "runtime-tokio-rustls"] }
+sea-orm-migration = { version = "=2.0.0-rc.37", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "macros"] }
