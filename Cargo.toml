@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/bbm", "crates/bbmctl", "crates/bbmctl-database"]
+resolver = "2"
