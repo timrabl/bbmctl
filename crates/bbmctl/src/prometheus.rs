@@ -28,6 +28,23 @@ use tokio::net::TcpListener;
 
 use bbmctl_database::Database;
 
+/// Render a float in Prometheus exposition format.
+///
+/// Rust prints `inf`/`NaN` for non-finite values, but the text format requires
+/// `+Inf`/`-Inf`/`NaN` -- and a single malformed sample makes the whole scrape
+/// unparseable, not just that line.
+fn fmt_value(v: f64) -> String {
+    if v.is_nan() {
+        "NaN".to_string()
+    } else if v == f64::INFINITY {
+        "+Inf".to_string()
+    } else if v == f64::NEG_INFINITY {
+        "-Inf".to_string()
+    } else {
+        v.to_string()
+    }
+}
+
 async fn render_metrics(db: &Database) -> Result<String> {
     let mut out = String::new();
 
@@ -37,21 +54,25 @@ async fn render_metrics(db: &Database) -> Result<String> {
             "# HELP speedtest_download_kbps Latest download speed in kbit/s"
         )?;
         writeln!(out, "# TYPE speedtest_download_kbps gauge")?;
-        writeln!(out, "speedtest_download_kbps {}", m.download_kbps)?;
+        writeln!(
+            out,
+            "speedtest_download_kbps {}",
+            fmt_value(m.download_kbps)
+        )?;
 
         writeln!(
             out,
             "# HELP speedtest_upload_kbps Latest upload speed in kbit/s"
         )?;
         writeln!(out, "# TYPE speedtest_upload_kbps gauge")?;
-        writeln!(out, "speedtest_upload_kbps {}", m.upload_kbps)?;
+        writeln!(out, "speedtest_upload_kbps {}", fmt_value(m.upload_kbps))?;
 
         writeln!(
             out,
             "# HELP speedtest_latency_ms Latest latency in milliseconds"
         )?;
         writeln!(out, "# TYPE speedtest_latency_ms gauge")?;
-        writeln!(out, "speedtest_latency_ms {}", m.latency_ms)?;
+        writeln!(out, "speedtest_latency_ms {}", fmt_value(m.latency_ms))?;
 
         writeln!(
             out,
@@ -60,8 +81,8 @@ async fn render_metrics(db: &Database) -> Result<String> {
         writeln!(out, "# TYPE speedtest_download_mbps gauge")?;
         writeln!(
             out,
-            "speedtest_download_mbps {:.2}",
-            m.download_kbps / 1000.0
+            "speedtest_download_mbps {}",
+            fmt_value(m.download_kbps / 1000.0)
         )?;
 
         writeln!(
@@ -69,37 +90,56 @@ async fn render_metrics(db: &Database) -> Result<String> {
             "# HELP speedtest_upload_mbps Latest upload speed in Mbit/s"
         )?;
         writeln!(out, "# TYPE speedtest_upload_mbps gauge")?;
-        writeln!(out, "speedtest_upload_mbps {:.2}", m.upload_kbps / 1000.0)?;
+        writeln!(
+            out,
+            "speedtest_upload_mbps {}",
+            fmt_value(m.upload_kbps / 1000.0)
+        )?;
     }
 
     if let Some(s) = db.measurements().summary().await? {
         writeln!(
             out,
-            "# HELP speedtest_measurements_total Total number of recorded measurements"
+            "# HELP speedtest_measurements Number of recorded measurements"
         )?;
-        writeln!(out, "# TYPE speedtest_measurements_total counter")?;
-        writeln!(out, "speedtest_measurements_total {}", s.count)?;
+        // A gauge, not a counter: `history purge` and `history delete --all`
+        // reduce this, which a counter reader interprets as a reset. The
+        // `_total` suffix is likewise reserved for counters.
+        writeln!(out, "# TYPE speedtest_measurements gauge")?;
+        writeln!(out, "speedtest_measurements {}", s.count)?;
 
         writeln!(
             out,
             "# HELP speedtest_avg_download_kbps Average download speed in kbit/s"
         )?;
         writeln!(out, "# TYPE speedtest_avg_download_kbps gauge")?;
-        writeln!(out, "speedtest_avg_download_kbps {}", s.avg_download_kbps)?;
+        writeln!(
+            out,
+            "speedtest_avg_download_kbps {}",
+            fmt_value(s.avg_download_kbps)
+        )?;
 
         writeln!(
             out,
             "# HELP speedtest_avg_upload_kbps Average upload speed in kbit/s"
         )?;
         writeln!(out, "# TYPE speedtest_avg_upload_kbps gauge")?;
-        writeln!(out, "speedtest_avg_upload_kbps {}", s.avg_upload_kbps)?;
+        writeln!(
+            out,
+            "speedtest_avg_upload_kbps {}",
+            fmt_value(s.avg_upload_kbps)
+        )?;
 
         writeln!(
             out,
             "# HELP speedtest_avg_latency_ms Average latency in milliseconds"
         )?;
         writeln!(out, "# TYPE speedtest_avg_latency_ms gauge")?;
-        writeln!(out, "speedtest_avg_latency_ms {}", s.avg_latency_ms)?;
+        writeln!(
+            out,
+            "speedtest_avg_latency_ms {}",
+            fmt_value(s.avg_latency_ms)
+        )?;
     }
 
     Ok(out)
@@ -216,6 +256,44 @@ async fn handle_connection(
 mod tests {
     use super::*;
 
+    /// Prometheus requires `+Inf`/`-Inf`/`NaN`; Rust's `{}` prints `inf`,
+    /// which makes the entire scrape unparseable, not just that one sample.
+    #[test]
+    fn non_finite_values_use_prometheus_spelling() {
+        assert_eq!(fmt_value(f64::INFINITY), "+Inf");
+        assert_eq!(fmt_value(f64::NEG_INFINITY), "-Inf");
+        assert_eq!(fmt_value(f64::NAN), "NaN");
+    }
+
+    #[test]
+    fn finite_values_render_normally() {
+        assert_eq!(fmt_value(0.0), "0");
+        assert_eq!(fmt_value(1234.5), "1234.5");
+    }
+
+    /// `history purge` and `history delete --all` reduce the count, so a
+    /// counter type makes `rate()`/`increase()` report a spurious reset.
+    /// Prometheus also reserves the `_total` suffix for counters.
+    #[tokio::test]
+    async fn measurement_count_is_a_gauge() {
+        let db = Database::connect_in_memory().await.unwrap();
+        db.measurements()
+            .record(1000.0, 500.0, 5.0, None, None)
+            .await
+            .unwrap();
+
+        let metrics = render_metrics(&db).await.unwrap();
+
+        assert!(
+            !metrics.contains("speedtest_measurements_total"),
+            "the _total suffix is reserved for counters:\n{metrics}"
+        );
+        assert!(
+            metrics.contains("# TYPE speedtest_measurements gauge"),
+            "measurement count must be a gauge:\n{metrics}"
+        );
+    }
+
     #[tokio::test]
     async fn render_empty_db() {
         let db = Database::connect_in_memory().await.unwrap();
@@ -235,8 +313,10 @@ mod tests {
         assert!(metrics.contains("speedtest_download_kbps 100000"));
         assert!(metrics.contains("speedtest_upload_kbps 50000"));
         assert!(metrics.contains("speedtest_latency_ms 12.5"));
-        assert!(metrics.contains("speedtest_download_mbps 100.00"));
-        assert!(metrics.contains("speedtest_measurements_total 1"));
+        // No longer zero-padded: the exposition format does not require a
+        // fixed number of decimals, and `{:.2}` cannot express +Inf.
+        assert!(metrics.contains("speedtest_download_mbps 100"));
+        assert!(metrics.contains("speedtest_measurements 1"));
     }
 }
 
