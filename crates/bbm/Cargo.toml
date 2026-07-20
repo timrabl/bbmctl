@@ -1,6 +1,6 @@
 [package]
 name = "bbm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
 license = "MIT"
