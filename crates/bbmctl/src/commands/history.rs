@@ -128,10 +128,7 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
                     record
                         .get(4)
                         .and_then(|s| if s.is_empty() { None } else { s.parse().ok() });
-                let plan_id: Option<&str> =
-                    record
-                        .get(5)
-                        .and_then(|s| if s.is_empty() { None } else { Some(s) });
+                let plan_id: Option<&str> = record.get(5).filter(|s| !s.is_empty());
 
                 db.measurements()
                     .record_with_timestamp(
