@@ -24,6 +24,7 @@ mod m20250101_000001_create_tables;
 mod m20250102_000002_create_settings;
 mod m20250103_000003_normalize_timestamps;
 mod m20250104_000004_add_indexes;
+mod m20250105_000005_unique_active_campaign;
 
 pub struct Migrator;
 
@@ -34,6 +35,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250102_000002_create_settings::Migration),
             Box::new(m20250103_000003_normalize_timestamps::Migration),
             Box::new(m20250104_000004_add_indexes::Migration),
+            Box::new(m20250105_000005_unique_active_campaign::Migration),
         ]
     }
 }
