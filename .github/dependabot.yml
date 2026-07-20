@@ -8,12 +8,23 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "Europe/Berlin"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     assignees:
       - "timrabl"
     commit-message:
       prefix: "deps"
       include: "scope"
+    # Routine minor/patch bumps arrive as a single PR so they cannot fill the
+    # queue. Previously five stale PRs hit the limit and blocked Dependabot
+    # from opening a security update for anyhow (RUSTSEC-2026-0190).
+    # Major bumps stay separate -- they need individual review.
+    groups:
+      cargo-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -22,9 +33,13 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "Europe/Berlin"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     assignees:
       - "timrabl"
     commit-message:
       prefix: "ci"
       include: "scope"
+    groups:
+      github-actions-all:
+        patterns:
+          - "*"
