@@ -1,10 +1,10 @@
 [package]
 name = "bbmctl-database"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "Database layer for bbmctl (SeaORM + SQLite)"
-authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
-license = "MIT"
+authors.workspace = true
+license.workspace = true
 publish = false
 
 [features]
