@@ -61,7 +61,7 @@ impl<'a> MeasurementRepo<'a> {
         provider_id: Option<i64>,
         plan_id: Option<&str>,
     ) -> Result<measurement::Model> {
-        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = crate::now_timestamp();
 
         let active = measurement::ActiveModel {
             timestamp: Set(now),
@@ -182,7 +182,10 @@ impl<'a> MeasurementRepo<'a> {
 
         let first: String = row.try_get_by_index(1)?;
         let last: String = row.try_get_by_index(2)?;
-        let days_spanned: i32 = row.try_get_by_index(3)?;
+        // JULIANDAY yields NULL for a timestamp SQLite cannot parse, so this
+        // must be nullable: otherwise one malformed row breaks the entire
+        // summary (and the Prometheus exporter) permanently.
+        let days_spanned: i32 = row.try_get_by_index::<Option<i32>>(3)?.unwrap_or(0);
         let avg_download_kbps: f64 = row.try_get_by_index(4)?;
         let avg_upload_kbps: f64 = row.try_get_by_index(5)?;
         let avg_latency_ms: f64 = row.try_get_by_index(6)?;
@@ -214,6 +217,71 @@ impl<'a> MeasurementRepo<'a> {
 #[cfg(test)]
 mod tests {
     use crate::Database;
+
+    /// `measurements.timestamp` is a varchar compared lexicographically by
+    /// every query. Plain records used `%Y-%m-%dT%H:%M:%SZ` while campaign
+    /// records used `to_rfc3339()` (`+00:00`, with microseconds). Since '.'
+    /// (0x2E) sorts before 'Z' (0x5A), a campaign row written later in the
+    /// same second sorted *before* a plain one -- so "newest first" lied, and
+    /// `history purge --older-than` could delete the wrong rows.
+    #[tokio::test]
+    async fn all_writers_use_one_timestamp_format() {
+        let db = Database::connect_in_memory().await.unwrap();
+
+        let plain = db
+            .measurements()
+            .record(100_000.0, 50_000.0, 10.0, None, None)
+            .await
+            .unwrap();
+
+        let campaign = db.campaigns().start(1, "plan-1").await.unwrap();
+        let via_campaign = db
+            .campaigns()
+            .record(campaign.id, 200_000.0, 60_000.0, 20.0)
+            .await
+            .unwrap();
+
+        // Both rows must be directly comparable as strings.
+        assert_eq!(
+            plain.timestamp.len(),
+            via_campaign.timestamp.len(),
+            "timestamps have different shapes: {:?} vs {:?}",
+            plain.timestamp,
+            via_campaign.timestamp
+        );
+        assert!(
+            plain.timestamp.ends_with('Z') && via_campaign.timestamp.ends_with('Z'),
+            "both must use the same UTC suffix: {:?} vs {:?}",
+            plain.timestamp,
+            via_campaign.timestamp
+        );
+    }
+
+    /// `JULIANDAY` returns NULL for a timestamp it cannot parse, and decoding
+    /// that as a non-null i32 fails. A single bad row -- reachable through
+    /// `history import`, which does no validation -- therefore breaks
+    /// `history summary` and the Prometheus exporter permanently, with no CLI
+    /// path to find or remove the offending row.
+    #[tokio::test]
+    async fn summary_survives_an_unparseable_timestamp() {
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.measurements();
+
+        repo.record(100_000.0, 50_000.0, 10.0, None, None)
+            .await
+            .unwrap();
+        repo.record_with_timestamp("not-a-date", 200_000.0, 60_000.0, 20.0, None, None)
+            .await
+            .unwrap();
+
+        let summary = repo
+            .summary()
+            .await
+            .expect("one malformed row must not break the whole summary")
+            .expect("summary should exist for a non-empty table");
+
+        assert_eq!(summary.count, 2);
+    }
 
     #[tokio::test]
     async fn record_and_history() {
