@@ -88,6 +88,35 @@ impl StubServer {
     }
 }
 
+/// Accept connections and then hold them open indefinitely without replying.
+/// Models a black-holing server: the socket is live, so the client will wait
+/// forever unless it enforces its own timeout.
+pub async fn serve_never_responds() -> StubServer {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let hits = Arc::new(AtomicUsize::new(0));
+    let counter = hits.clone();
+
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            counter.fetch_add(1, Ordering::SeqCst);
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf).await;
+            // Keep the socket alive so the peer sees an open, silent connection.
+            held.push(sock);
+        }
+    });
+
+    StubServer {
+        base_url: format!("http://{addr}"),
+        hits,
+    }
+}
+
 /// Serve a response that declares a very large body and then dribbles it out
 /// forever, so the client is always cut off by its own deadline rather than
 /// reaching the end of the body.

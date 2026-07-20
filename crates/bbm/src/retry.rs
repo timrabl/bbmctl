@@ -29,6 +29,10 @@ use crate::error::BbmError;
 /// Default maximum number of retry attempts.
 pub const DEFAULT_MAX_ATTEMPTS: u32 = 3;
 
+/// Upper bound on a single backoff delay. Unbounded doubling reaches years,
+/// which would hang a caller rather than failing.
+pub const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
 /// A tower retry policy for transient HTTP failures with exponential backoff.
 #[derive(Debug, Clone)]
 pub struct RetryPolicy {
@@ -49,8 +53,10 @@ impl RetryPolicy {
     /// backoff: 200ms * 2^(current_attempt - 1).
     pub fn backoff_duration(&self) -> Duration {
         let base = Duration::from_millis(200);
-        let factor = 2u64.saturating_pow(self.current_attempt.saturating_sub(1));
-        base * factor as u32
+        // Saturate in u32 throughout: computing in u64 and casting truncates,
+        // so 2^32 becomes 0 and the backoff collapses to nothing.
+        let factor = 2u32.saturating_pow(self.current_attempt.saturating_sub(1));
+        base.saturating_mul(factor).min(MAX_BACKOFF)
     }
 
     /// Determine whether the given error is retryable.
@@ -130,6 +136,53 @@ where
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// `2u64.saturating_pow(..) as u32` truncates rather than saturating: at
+    /// attempt 33 the factor is 2^32, which casts to 0, giving zero backoff --
+    /// a hot retry loop. `max_attempts` is public, so a caller can reach this.
+    #[test]
+    fn backoff_saturates_instead_of_wrapping_to_zero() {
+        let mut policy = RetryPolicy::new(64);
+        policy.current_attempt = 33;
+
+        let backoff = policy.backoff_duration();
+
+        assert!(
+            backoff >= Duration::from_millis(200),
+            "backoff collapsed to {backoff:?}; it must never shrink below the base delay"
+        );
+    }
+
+    /// Unbounded doubling is not a usable delay: by attempt 32 it is measured
+    /// in years, which would hang a caller indefinitely rather than failing.
+    #[test]
+    fn backoff_is_capped() {
+        let mut policy = RetryPolicy::new(64);
+        policy.current_attempt = 40;
+
+        let backoff = policy.backoff_duration();
+
+        assert!(
+            backoff <= Duration::from_secs(60),
+            "backoff of {backoff:?} is unusable; it must be capped"
+        );
+    }
+
+    /// Backoff must be monotonic -- never smaller than the previous attempt.
+    #[test]
+    fn backoff_never_decreases() {
+        let mut prev = Duration::ZERO;
+        for attempt in 1..=40 {
+            let mut policy = RetryPolicy::new(64);
+            policy.current_attempt = attempt;
+            let backoff = policy.backoff_duration();
+            assert!(
+                backoff >= prev,
+                "attempt {attempt}: backoff {backoff:?} < previous {prev:?}"
+            );
+            prev = backoff;
+        }
+    }
 
     #[test]
     fn retryable_errors() {

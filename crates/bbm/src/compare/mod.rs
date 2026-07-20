@@ -62,6 +62,40 @@ mod tests {
         assert!(result.results.iter().all(|r| r.met));
     }
 
+    /// An unparseable field (the API has returned "", "n/a", and comma
+    /// decimals) must never let a run be reported as passing. This is used as
+    /// evidence in a BNetzA Nachweisverfahren, so a false "ALL PASS" is the
+    /// worst possible failure mode.
+    #[test]
+    fn unparseable_threshold_does_not_pass() {
+        let plan = make_plan("", "80000", "100000", "10000", "20000", "40000");
+        let result = plan.compare(100_000.0, 40_000.0);
+
+        assert!(
+            !result.all_met,
+            "a plan with an unverifiable term must not report all_met"
+        );
+    }
+
+    /// ...but every term that could be checked passing must still be
+    /// distinguishable from an outright failure.
+    #[test]
+    fn unparseable_threshold_is_skipped_not_failed() {
+        let plan = make_plan("", "80000", "100000", "10000", "20000", "40000");
+        let result = plan.compare(100_000.0, 40_000.0);
+
+        let checkable: Vec<_> = result
+            .results
+            .iter()
+            .filter(|r| r.threshold_kbps.is_some())
+            .collect();
+        assert!(
+            checkable.iter().all(|r| r.met),
+            "every checkable term should have passed"
+        );
+        assert_eq!(checkable.len(), 5, "one of six terms was unparseable");
+    }
+
     #[test]
     fn below_minimum() {
         let plan = make_plan("50000", "80000", "100000", "10000", "20000", "40000");

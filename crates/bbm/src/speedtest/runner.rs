@@ -33,6 +33,9 @@ use super::{SpeedTestConfig, SpeedTestResult};
 
 const UPLOAD_CHUNK_SIZE: usize = 131_072;
 const LATENCY_SAMPLES: u32 = 10;
+/// Per-sample TCP connect timeout. Without it, a black-holing host blocks for
+/// the OS SYN timeout on every sample.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Runs speed tests (download, upload, latency) against a configured peer.
 pub struct SpeedTestRunner {
@@ -45,7 +48,7 @@ impl SpeedTestRunner {
     /// Create a new runner with the given configuration.
     pub fn new(config: SpeedTestConfig) -> Result<Self> {
         let http = Client::builder()
-            .timeout(Duration::from_secs(config.duration_secs + 5))
+            .timeout(Duration::from_secs(config.duration_secs.saturating_add(5)))
             .http1_only()
             .build()
             .map_err(BbmError::Http)?;
@@ -224,14 +227,37 @@ impl SpeedTestRunner {
             .ok_or_else(|| BbmError::TestFailed(format!("could not resolve {addr}")))?;
 
         let mut rtts = Vec::with_capacity(LATENCY_SAMPLES as usize);
+        let mut last_error: Option<String> = None;
 
         for _ in 0..LATENCY_SAMPLES {
             let start = Instant::now();
-            let stream = tokio::net::TcpStream::connect(resolved).await?;
-            let elapsed = start.elapsed();
-            drop(stream);
-            rtts.push(elapsed.as_secs_f64() * 1000.0);
+            // Bound each connect: against a black-holing host a bare connect
+            // blocks for the OS SYN timeout (~75s), so ten samples could hang
+            // for over twelve minutes with no upper bound.
+            let attempt =
+                tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(resolved))
+                    .await;
+
+            match attempt {
+                Ok(Ok(stream)) => {
+                    let elapsed = start.elapsed();
+                    drop(stream);
+                    rtts.push(elapsed.as_secs_f64() * 1000.0);
+                }
+                // Tolerate individual failures: one dropped packet on a
+                // congested line must not abort the whole suite.
+                Ok(Err(e)) => last_error = Some(e.to_string()),
+                Err(_) => last_error = Some(format!("connect timed out after {CONNECT_TIMEOUT:?}")),
+            }
+
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        if rtts.is_empty() {
+            let detail = last_error.unwrap_or_else(|| "no samples succeeded".to_string());
+            return Err(BbmError::TestFailed(format!(
+                "latency measurement failed against {addr}: {detail}"
+            )));
         }
 
         let avg = rtts.iter().sum::<f64>() / rtts.len() as f64;
@@ -256,9 +282,76 @@ mod tests {
             peer: base_url.to_string(),
             rtt_peer: "127.0.0.1".to_string(),
             duration_secs: 1,
-            port: 0,
+            port: port_of(base_url),
             streams: 1,
         }
+    }
+
+    fn port_of(base_url: &str) -> u16 {
+        base_url.rsplit(':').next().unwrap().parse().unwrap()
+    }
+
+    /// `duration_secs + 5` panics in debug and wraps to 4 in release. The
+    /// field is public, so a caller can reach this.
+    #[test]
+    fn extreme_duration_does_not_overflow() {
+        let config = SpeedTestConfig {
+            peer: "example.invalid".to_string(),
+            rtt_peer: "example.invalid".to_string(),
+            duration_secs: u64::MAX,
+            port: 443,
+            streams: 1,
+        };
+
+        // Must not panic.
+        let runner = SpeedTestRunner::new(config);
+        assert!(runner.is_ok(), "constructing the runner must not fail");
+    }
+
+    /// A closed port must produce a clear, attributable failure rather than a
+    /// bare io error propagated out of the first sample.
+    #[tokio::test]
+    async fn latency_against_closed_port_fails_clearly() {
+        // Bind then drop, so the port is almost certainly unused.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let config = SpeedTestConfig {
+            peer: "http://127.0.0.1:1".to_string(),
+            rtt_peer: "127.0.0.1".to_string(),
+            duration_secs: 1,
+            port,
+            streams: 1,
+        };
+        let runner = SpeedTestRunner::new(config).unwrap();
+
+        let err = runner
+            .measure_latency()
+            .await
+            .expect_err("a closed port must fail");
+
+        assert!(
+            err.to_string().contains("latency"),
+            "error should identify the latency stage, got: {err}"
+        );
+    }
+
+    /// One lost sample must not abort the whole suite -- a single dropped
+    /// packet is normal on a congested line.
+    #[tokio::test]
+    async fn latency_tolerates_some_failed_samples() {
+        let server = StubServer::serve_raw(http_response(200, "text/plain", "ok")).await;
+        let config = config_for(&server.base_url);
+        let runner = SpeedTestRunner::new(config).unwrap();
+
+        let (avg, jitter) = runner
+            .measure_latency()
+            .await
+            .expect("a reachable peer must yield a latency reading");
+
+        assert!(avg >= 0.0, "avg latency must be non-negative, got {avg}");
+        assert!(jitter >= 0.0, "jitter must be non-negative, got {jitter}");
     }
 
     /// `reqwest::send()` returns `Ok` for any HTTP status. Crediting a full
