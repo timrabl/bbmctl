@@ -65,10 +65,19 @@ pub async fn run(args: CompareArgs, config: &ResolvedConfig, db: &Database) -> R
     };
 
     let client = bbm::BbmClient::new();
-    let plans = client.get_plans_by_provider_id(args.provider).await?;
+    // `compare` already used config.provider for the recording side, so
+    // requiring the flag for the lookup was inconsistent with `test` and
+    // `history add`, which both accept a configured provider.
+    let provider = args.provider.or(config.provider).ok_or_else(|| {
+        anyhow::anyhow!(
+            "--provider is required (set it in config, or run `bbmctl provider switch`)"
+        )
+    })?;
+
+    let plans = client.get_plans_by_provider_id(provider).await?;
 
     if plans.is_empty() {
-        anyhow::bail!("no plans found for provider {}", args.provider);
+        anyhow::bail!("no plans found for provider {provider}");
     }
 
     let target_plans: Vec<&bbm::Plan> = match &args.plan {
@@ -77,7 +86,7 @@ pub async fn run(args: CompareArgs, config: &ResolvedConfig, db: &Database) -> R
             if matched.is_empty() {
                 anyhow::bail!(
                     "plan '{}' not found for provider {} — use `list plans --provider {}` to see available plans",
-                    plan_id, args.provider, args.provider
+                    plan_id, provider, provider
                 );
             }
             matched

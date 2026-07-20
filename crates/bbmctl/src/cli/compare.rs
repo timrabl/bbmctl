@@ -30,9 +30,9 @@ pub struct CompareArgs {
     #[command(flatten)]
     pub list: ListArgs,
 
-    /// Provider ID
+    /// Provider ID. Falls back to the config file or `provider switch`.
     #[arg(long)]
-    pub provider: i64,
+    pub provider: Option<i64>,
 
     /// Plan ID (if omitted, compares against all plans for the provider)
     #[arg(long)]

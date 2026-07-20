@@ -31,13 +31,14 @@ pub struct TestArgs {
     #[command(flatten)]
     pub list: ListArgs,
 
-    /// Test duration per phase in seconds
-    #[arg(long, default_value = "10")]
-    pub duration: u64,
+    /// Test duration per phase in seconds [default: 10, or `duration` in config]
+    #[arg(long)]
+    pub duration: Option<u64>,
 
     /// Number of concurrent streams for throughput measurement
-    #[arg(long, default_value = "8")]
-    pub streams: u16,
+    /// [default: 8, or `streams` in config]
+    #[arg(long)]
+    pub streams: Option<u16>,
 
     /// Speed display unit
     #[arg(long, default_value = "auto")]
@@ -65,6 +66,22 @@ pub struct TestArgs {
 }
 
 impl TestArgs {
+    /// Resolve duration: CLI flag, then config file, then the default.
+    /// The `duration` config key was parsed and then never read.
+    pub fn resolved_duration(&self, config: &crate::config::ResolvedConfig) -> u64 {
+        self.duration
+            .or(config.duration)
+            .unwrap_or(bbm::SpeedTestConfig::DEFAULT_DURATION_SECS)
+    }
+
+    /// Resolve streams: CLI flag, then config file, then the default.
+    /// The `streams` config key was parsed and then never read.
+    pub fn resolved_streams(&self, config: &crate::config::ResolvedConfig) -> u16 {
+        self.streams
+            .or(config.streams)
+            .unwrap_or(bbm::SpeedTestConfig::DEFAULT_STREAMS)
+    }
+
     /// Whether this invocation stores its result. `--every` implies it, since
     /// a scheduled run that discarded every result would be pointless.
     pub fn records_to_database(&self) -> bool {
@@ -140,5 +157,62 @@ mod tests {
             panic!("expected the test subcommand");
         };
         assert!(!args.records_to_database());
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::*;
+    use crate::config::ResolvedConfig;
+    use clap::Parser;
+
+    fn args_from(argv: &[&str]) -> TestArgs {
+        let cli = crate::cli::Cli::try_parse_from(argv)
+            .map_err(|e| e.to_string())
+            .expect("should parse");
+        match cli.command {
+            crate::cli::Commands::Test(a) => a,
+            _ => panic!("expected the test subcommand"),
+        }
+    }
+
+    /// `streams` and `duration` were defined in the config file, written into
+    /// ResolvedConfig, and then read nowhere -- a user setting
+    /// `default: {streams: 4}` silently got 8.
+    #[test]
+    fn config_supplies_duration_and_streams() {
+        let args = args_from(&["bbmctl", "test"]);
+        let config = ResolvedConfig {
+            duration: Some(30),
+            streams: Some(4),
+            ..ResolvedConfig::default()
+        };
+
+        assert_eq!(args.resolved_duration(&config), 30);
+        assert_eq!(args.resolved_streams(&config), 4);
+    }
+
+    /// An explicit flag still wins over the config file.
+    #[test]
+    fn cli_flag_beats_config() {
+        let args = args_from(&["bbmctl", "test", "--duration", "5", "--streams", "2"]);
+        let config = ResolvedConfig {
+            duration: Some(30),
+            streams: Some(4),
+            ..ResolvedConfig::default()
+        };
+
+        assert_eq!(args.resolved_duration(&config), 5);
+        assert_eq!(args.resolved_streams(&config), 2);
+    }
+
+    /// With neither, the documented defaults apply.
+    #[test]
+    fn defaults_apply_when_nothing_is_set() {
+        let args = args_from(&["bbmctl", "test"]);
+        let config = ResolvedConfig::default();
+
+        assert_eq!(args.resolved_duration(&config), 10);
+        assert_eq!(args.resolved_streams(&config), 8);
     }
 }
