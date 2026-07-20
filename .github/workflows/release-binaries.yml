@@ -67,14 +67,14 @@ jobs:
 
       - name: Upload release asset (Unix)
         if: runner.os != 'Windows'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.tar.gz
 
       - name: Upload release asset (Windows)
         if: runner.os == 'Windows'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: bbmctl-${{ steps.tag.outputs.tag }}-${{ matrix.target }}.zip
@@ -117,7 +117,7 @@ jobs:
         run: cargo deb -p bbmctl --no-build
 
       - name: Upload .deb release asset
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           files: target/debian/*.deb
