@@ -32,6 +32,20 @@ use migrations::Migrator;
 
 pub use repositories::{CampaignRepo, MeasurementRepo, SettingsRepo};
 
+/// Canonical format for every timestamp written to the database.
+///
+/// `measurements.timestamp` is a varchar that all queries compare
+/// lexicographically, so the representation must be fixed-width and
+/// byte-order-equal to chronological order. Millisecond precision keeps
+/// same-second measurements correctly ordered; the literal `Z` suffix avoids
+/// the `+00:00` form, whose `+` sorts before `Z` and silently inverts ordering.
+pub const TIMESTAMP_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
+
+/// Current UTC time in [`TIMESTAMP_FORMAT`].
+pub fn now_timestamp() -> String {
+    chrono::Utc::now().format(TIMESTAMP_FORMAT).to_string()
+}
+
 pub struct Database {
     conn: DatabaseConnection,
 }

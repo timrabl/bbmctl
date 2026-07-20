@@ -99,7 +99,7 @@ impl<'a> CampaignRepo<'a> {
         }
 
         let now: DateTime<Utc> = Utc::now();
-        let ts = now.to_rfc3339();
+        let ts = now.format(crate::TIMESTAMP_FORMAT).to_string();
 
         let active_model = campaign::ActiveModel {
             provider_id: Set(provider_id),
@@ -177,7 +177,7 @@ impl<'a> CampaignRepo<'a> {
 
         let warnings = self.check_timing(campaign_id, &now).await?;
 
-        let ts = now.to_rfc3339();
+        let ts = now.format(crate::TIMESTAMP_FORMAT).to_string();
         let active_model = measurement::ActiveModel {
             timestamp: Set(ts),
             download_kbps: Set(download_kbps),
