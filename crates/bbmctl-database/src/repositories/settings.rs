@@ -19,7 +19,7 @@
 // SOFTWARE.
 
 use anyhow::Result;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
 use crate::entities::settings;
 
@@ -40,24 +40,26 @@ impl<'a> SettingsRepo<'a> {
         Ok(result.map(|m| m.value))
     }
 
+    /// Insert or replace a setting in one statement.
+    ///
+    /// This was read-then-write, so two concurrent writers could both observe
+    /// "absent" and both insert. An upsert makes it a single atomic statement.
     pub async fn set(&self, key: &str, value: &str) -> Result<()> {
-        // Try to find existing
-        let existing = settings::Entity::find()
-            .filter(settings::Column::Key.eq(key))
-            .one(self.conn)
-            .await?;
+        use sea_orm::sea_query::OnConflict;
 
-        if let Some(model) = existing {
-            let mut active: settings::ActiveModel = model.into();
-            active.value = Set(value.to_string());
-            active.update(self.conn).await?;
-        } else {
-            let active = settings::ActiveModel {
-                key: Set(key.to_string()),
-                value: Set(value.to_string()),
-            };
-            active.insert(self.conn).await?;
-        }
+        let active = settings::ActiveModel {
+            key: Set(key.to_string()),
+            value: Set(value.to_string()),
+        };
+
+        settings::Entity::insert(active)
+            .on_conflict(
+                OnConflict::column(settings::Column::Key)
+                    .update_column(settings::Column::Value)
+                    .to_owned(),
+            )
+            .exec(self.conn)
+            .await?;
 
         Ok(())
     }
@@ -68,5 +70,38 @@ impl<'a> SettingsRepo<'a> {
             .exec(self.conn)
             .await?;
         Ok(result.rows_affected > 0)
+    }
+}
+
+#[cfg(test)]
+mod upsert_tests {
+    use crate::Database;
+
+    /// Writing the same key twice must update in place, not fail or duplicate.
+    #[tokio::test]
+    async fn set_overwrites_an_existing_key() {
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.settings();
+
+        repo.set("active_provider", "437").await.unwrap();
+        repo.set("active_provider", "999").await.unwrap();
+
+        assert_eq!(
+            repo.get("active_provider").await.unwrap().as_deref(),
+            Some("999")
+        );
+    }
+
+    /// Repeating the same write is harmless.
+    #[tokio::test]
+    async fn set_is_idempotent() {
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.settings();
+
+        for _ in 0..3 {
+            repo.set("k", "v").await.unwrap();
+        }
+
+        assert_eq!(repo.get("k").await.unwrap().as_deref(), Some("v"));
     }
 }

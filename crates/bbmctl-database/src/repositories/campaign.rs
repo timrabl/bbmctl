@@ -23,7 +23,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use log::{info, warn};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseBackend, DatabaseConnection,
-    EntityTrait, QueryFilter, QueryOrder, Set, Statement,
+    EntityTrait, QueryFilter, QueryOrder, Set, Statement, TransactionTrait,
 };
 use serde::Serialize;
 
@@ -177,6 +177,12 @@ impl<'a> CampaignRepo<'a> {
 
         let warnings = self.check_timing(campaign_id, &now).await?;
 
+        // The insert and the completion update must land together: a crash
+        // between them left the measurement stored but the campaign stuck
+        // `active`, which for a Nachweisverfahren means a completed campaign
+        // that does not know it is complete.
+        let txn = self.conn.begin().await?;
+
         let ts = now.format(crate::TIMESTAMP_FORMAT).to_string();
         let active_model = measurement::ActiveModel {
             timestamp: Set(ts),
@@ -189,23 +195,29 @@ impl<'a> CampaignRepo<'a> {
             ..Default::default()
         };
 
-        let model = active_model.insert(self.conn).await?;
+        let model = active_model.insert(&txn).await?;
 
-        for w in &warnings {
-            warn!("{w}");
-        }
+        // Counted inside the transaction, so the row just inserted is visible.
+        let total = Self::measurement_count_on(&txn, campaign_id).await?;
+        let days = Self::days_spanned_on(&txn, campaign_id).await?;
+        let completed = total >= CAMPAIGN_REQUIRED_MEASUREMENTS && days >= CAMPAIGN_REQUIRED_DAYS;
 
-        let total = self.measurement_count(campaign_id).await?;
-        let days = self.days_spanned(campaign_id).await?;
-        if total >= CAMPAIGN_REQUIRED_MEASUREMENTS && days >= CAMPAIGN_REQUIRED_DAYS {
-            // Re-fetch the campaign to get the current state for update
+        if completed {
             let campaign = campaign::Entity::find_by_id(campaign_id)
-                .one(self.conn)
+                .one(&txn)
                 .await?
                 .context("campaign not found")?;
             let mut update_model: campaign::ActiveModel = campaign.into();
             update_model.status = Set("completed".to_string());
-            update_model.update(self.conn).await?;
+            update_model.update(&txn).await?;
+        }
+
+        txn.commit().await?;
+
+        for w in &warnings {
+            warn!("{w}");
+        }
+        if completed {
             info!("campaign #{campaign_id} completed! {total} measurements across {days} days.");
         }
 
@@ -403,11 +415,19 @@ impl<'a> CampaignRepo<'a> {
     }
 
     async fn measurement_count(&self, campaign_id: i64) -> Result<u64> {
+        Self::measurement_count_on(self.conn, campaign_id).await
+    }
+
+    /// Connection-generic so it can observe rows inserted in the same
+    /// transaction.
+    async fn measurement_count_on<C: sea_orm::ConnectionTrait>(
+        conn: &C,
+        campaign_id: i64,
+    ) -> Result<u64> {
         let sql = "SELECT COUNT(*) FROM measurements WHERE campaign_id = ?1";
         let stmt =
             Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, [campaign_id.into()]);
-        let row = self
-            .conn
+        let row = conn
             .query_one_raw(stmt)
             .await?
             .context("expected count row")?;
@@ -416,11 +436,19 @@ impl<'a> CampaignRepo<'a> {
     }
 
     async fn days_spanned(&self, campaign_id: i64) -> Result<u64> {
+        Self::days_spanned_on(self.conn, campaign_id).await
+    }
+
+    /// Connection-generic so it can observe rows inserted in the same
+    /// transaction.
+    async fn days_spanned_on<C: sea_orm::ConnectionTrait>(
+        conn: &C,
+        campaign_id: i64,
+    ) -> Result<u64> {
         let sql = "SELECT COUNT(DISTINCT DATE(timestamp)) FROM measurements WHERE campaign_id = ?1";
         let stmt =
             Statement::from_sql_and_values(DatabaseBackend::Sqlite, sql, [campaign_id.into()]);
-        let row = self
-            .conn
+        let row = conn
             .query_one_raw(stmt)
             .await?
             .context("expected count row")?;
@@ -497,6 +525,63 @@ mod tests {
         repo.start(1, "plan-1").await.unwrap();
         let err = repo.start(2, "plan-2").await;
         assert!(err.is_err());
+    }
+
+    /// `start` is check-then-insert with no database constraint, so two
+    /// concurrent starts both pass the check and both insert. `active()` then
+    /// silently returns whichever `.one()` happens to pick, and a campaign
+    /// backing a BNetzA Nachweisverfahren is no longer uniquely identified.
+    ///
+    /// The application-level check is bypassed here deliberately: the point is
+    /// that the invariant must hold in the database, not just in one code path.
+    #[tokio::test]
+    async fn database_rejects_a_second_active_campaign() {
+        use sea_orm::ConnectionTrait;
+
+        let db = Database::connect_in_memory().await.unwrap();
+
+        db.conn
+            .execute_unprepared(
+                "INSERT INTO campaigns (provider_id, plan_id, started_at, status)
+                 VALUES (1, 'plan-1', '2026-01-01T00:00:00.000Z', 'active')",
+            )
+            .await
+            .unwrap();
+
+        let second = db
+            .conn
+            .execute_unprepared(
+                "INSERT INTO campaigns (provider_id, plan_id, started_at, status)
+                 VALUES (2, 'plan-2', '2026-01-01T00:00:00.000Z', 'active')",
+            )
+            .await;
+
+        assert!(
+            second.is_err(),
+            "the database must reject a second active campaign"
+        );
+    }
+
+    /// Non-active campaigns are unconstrained -- any number may be completed,
+    /// expired or cancelled.
+    #[tokio::test]
+    async fn many_inactive_campaigns_are_allowed() {
+        use sea_orm::ConnectionTrait;
+
+        let db = Database::connect_in_memory().await.unwrap();
+
+        for (i, status) in ["completed", "expired", "cancelled", "completed"]
+            .iter()
+            .enumerate()
+        {
+            db.conn
+                .execute_unprepared(&format!(
+                    "INSERT INTO campaigns (provider_id, plan_id, started_at, status)
+                     VALUES ({i}, 'plan', '2026-01-01T00:00:00.000Z', '{status}')"
+                ))
+                .await
+                .expect("inactive campaigns must not be constrained");
+        }
     }
 
     #[tokio::test]
