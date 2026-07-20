@@ -24,7 +24,12 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+// Reject unknown keys rather than ignoring them. A misplaced or typo'd key
+// (e.g. `database` nested under `default:`, where it does not belong) was
+// silently dropped, so the CLI fell back to the default database path and
+// operated on the wrong data with no indication anything was wrong.
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     pub database: Option<String>,
     #[serde(default)]
@@ -34,6 +39,7 @@ pub struct ConfigFile {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileConfig {
     pub provider: Option<i64>,
     pub plan: Option<String>,
@@ -44,7 +50,7 @@ pub struct ProfileConfig {
     pub speed_unit: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ResolvedConfig {
     pub database: Option<String>,
     pub provider: Option<i64>,
@@ -54,6 +60,20 @@ pub struct ResolvedConfig {
     pub streams: Option<u16>,
     pub duration: Option<u64>,
     pub speed_unit: Option<String>,
+}
+
+impl ResolvedConfig {
+    /// Fold in the `active_provider` stored by `provider switch`.
+    ///
+    /// Precedence is CLI flag > config file > stored setting: the stored value
+    /// is the least explicit signal, so it only fills a gap. Without this the
+    /// setting was written and read back by `provider show` but consulted by
+    /// nothing else, making `provider switch` a no-op.
+    pub fn apply_stored_provider(&mut self, stored: Option<i64>) {
+        if self.provider.is_none() {
+            self.provider = stored;
+        }
+    }
 }
 
 impl ConfigFile {
@@ -200,5 +220,104 @@ profiles:
     fn missing_file_returns_default() {
         let config = ConfigFile::load(None).unwrap();
         assert!(config.database.is_none());
+    }
+}
+
+#[cfg(test)]
+mod active_provider_tests {
+    use super::*;
+
+    /// `provider switch` writes `active_provider` to the database and
+    /// `provider show` reads it back, but nothing else ever consulted it --
+    /// `test`, `history add`, `compare` and `campaign` all resolved the
+    /// provider from the CLI flag or config file only. The user switched
+    /// providers, saw it confirmed, and nothing changed.
+    #[test]
+    fn stored_provider_is_used_when_nothing_else_supplies_one() {
+        let mut resolved = ResolvedConfig::default();
+        assert_eq!(resolved.provider, None);
+
+        resolved.apply_stored_provider(Some(437));
+
+        assert_eq!(
+            resolved.provider,
+            Some(437),
+            "a stored active provider must be used when no flag or config supplies one"
+        );
+    }
+
+    /// The config file is more explicit than a stored setting, so it wins.
+    #[test]
+    fn config_file_provider_beats_stored_provider() {
+        let mut resolved = ResolvedConfig {
+            provider: Some(100),
+            ..ResolvedConfig::default()
+        };
+
+        resolved.apply_stored_provider(Some(437));
+
+        assert_eq!(resolved.provider, Some(100));
+    }
+
+    /// No stored value must leave the resolution untouched.
+    #[test]
+    fn absent_stored_provider_changes_nothing() {
+        let mut resolved = ResolvedConfig {
+            provider: Some(100),
+            ..ResolvedConfig::default()
+        };
+
+        resolved.apply_stored_provider(None);
+
+        assert_eq!(resolved.provider, Some(100));
+    }
+}
+
+#[cfg(test)]
+mod strict_config_tests {
+    use super::*;
+
+    /// A misplaced key must be an error, not silently dropped.
+    ///
+    /// `database` is top-level, but nesting it under `default:` is a natural
+    /// mistake. Serde ignored it, the CLI fell back to the default database
+    /// path, and the user got no indication -- so commands silently operated
+    /// on the wrong database.
+    #[test]
+    fn misplaced_key_is_rejected() {
+        let yaml = "default:\n  database: /tmp/somewhere.db\n";
+
+        let result: Result<ConfigFile, _> = serde_yaml_ng::from_str(yaml);
+
+        let err = result.expect_err("a key in the wrong section must be rejected, not ignored");
+        assert!(
+            err.to_string().contains("database"),
+            "the error should name the offending key, got: {err}"
+        );
+    }
+
+    /// An outright typo must also be caught.
+    #[test]
+    fn unknown_top_level_key_is_rejected() {
+        let yaml = "databse: /tmp/typo.db\n";
+
+        let result: Result<ConfigFile, _> = serde_yaml_ng::from_str(yaml);
+
+        assert!(
+            result.is_err(),
+            "a typo'd key must be rejected rather than silently ignored"
+        );
+    }
+
+    /// A correct config must still parse.
+    #[test]
+    fn valid_config_still_parses() {
+        let yaml = "database: /tmp/ok.db\ndefault:\n  provider: 437\n";
+
+        let config: ConfigFile =
+            serde_yaml_ng::from_str(yaml).expect("a well-formed config must parse");
+
+        assert_eq!(config.database.as_deref(), Some("/tmp/ok.db"));
+        assert_eq!(config.default.provider, Some(437));
     }
 }
