@@ -1,0 +1,15 @@
+[advisories]
+# RUSTSEC-2023-0071 -- "Marvin Attack" timing sidechannel in the `rsa` crate.
+#
+# Not exploitable here: `rsa` is present in Cargo.lock but is NOT in our
+# dependency graph. `cargo tree -i rsa --target all -e all` returns nothing.
+# It is an optional dependency of `sqlx-mysql`, which is never enabled --
+# bbmctl-database uses sea-orm with only the `sqlx-sqlite` feature.
+#
+# (An earlier commit recorded this as "transitive dep from rustls". That was
+# incorrect; rustls does not depend on the `rsa` crate.)
+#
+# There is no fixed upstream version, so this cannot be resolved by upgrading.
+# Re-evaluate if a MySQL/Postgres backend is ever added, at which point `rsa`
+# becomes genuinely reachable and this ignore must be removed.
+ignore = ["RUSTSEC-2023-0071"]
