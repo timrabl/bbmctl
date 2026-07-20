@@ -48,9 +48,20 @@ async fn main() -> Result<()> {
     }
 
     let config = ConfigFile::load(cli.config.as_deref())?;
-    let resolved = config.resolve(cli.profile.as_deref())?;
+    let mut resolved = config.resolve(cli.profile.as_deref())?;
 
     let db = Database::connect(resolved.database.as_deref()).await?;
+
+    // `provider switch` stores an active provider; fold it in now that the
+    // database is open. It ranks below the CLI flag and config file, so it
+    // only fills a gap -- but without this step it was written and never read
+    // by anything except `provider show`.
+    let stored_provider = db
+        .settings()
+        .get("active_provider")
+        .await?
+        .and_then(|v| v.parse::<i64>().ok());
+    resolved.apply_stored_provider(stored_provider);
 
     match cli.command {
         Commands::Completions { .. } => unreachable!(),

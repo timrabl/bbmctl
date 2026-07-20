@@ -31,4 +31,10 @@ pub struct PrometheusArgs {
     /// Port to listen on
     #[arg(short, long, default_value = "9090")]
     pub port: u16,
+
+    /// Address to bind to. Defaults to loopback: the exporter has no
+    /// authentication, so binding to 0.0.0.0 exposes your measurement history
+    /// to the whole network.
+    #[arg(long, default_value = "127.0.0.1")]
+    pub bind: String,
 }

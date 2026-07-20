@@ -41,3 +41,6 @@ assets = [
 
 [dev-dependencies]
 bbmctl-database = { path = "../bbmctl-database", features = ["test-utils"] }
+# `test-util` provides paused time, so scheduling behaviour can be asserted
+# without tests that actually wait.
+tokio = { version = "1", features = ["test-util"] }

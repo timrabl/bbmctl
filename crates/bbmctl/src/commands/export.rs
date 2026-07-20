@@ -27,7 +27,7 @@ use bbmctl_database::Database;
 pub async fn run(command: ExportCommands, db: &Database) -> Result<()> {
     match command {
         ExportCommands::Prometheus(args) => {
-            prometheus::serve(args.port, db).await?;
+            prometheus::serve(&args.bind, args.port, db).await?;
         }
     }
     Ok(())
