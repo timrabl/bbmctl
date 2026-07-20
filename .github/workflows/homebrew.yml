@@ -3,11 +3,20 @@ name: Update Homebrew Formula
 on:
   release:
     types: [published]
+  # release-plz creates releases with GITHUB_TOKEN, and GitHub suppresses
+  # workflow-triggering events for token-driven actions -- so the trigger
+  # above does not fire for an automated release (see #30). This lets the
+  # formula be bumped by hand until release-plz uses a PAT.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to bump the formula to (e.g. v0.1.1)"
+        required: true
 
 jobs:
   homebrew:
     name: Update Homebrew formula
-    if: "!github.event.release.prerelease"
+    if: "github.event_name == 'workflow_dispatch' || !github.event.release.prerelease"
     runs-on: ubuntu-latest
     steps:
       - name: Update Homebrew formula
@@ -16,4 +25,4 @@ jobs:
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           tap: timrabl/tap
           formula: bbmctl
-          tag: ${{ github.ref_name }}
+          tag: ${{ inputs.tag || github.ref_name }}
