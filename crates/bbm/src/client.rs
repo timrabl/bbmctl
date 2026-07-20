@@ -35,6 +35,12 @@ use crate::speed::Speed;
 
 const DEFAULT_BASE_URL: &str = "https://breitbandmessung.de";
 
+/// Default per-request timeout.
+const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Default TCP connect timeout.
+const DEFAULT_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// A request to the API: just a full URL.
 #[derive(Debug, Clone)]
 struct ApiRequest {
@@ -64,7 +70,11 @@ impl Service<ApiRequest> for ApiService {
                 .get(&req.url)
                 .header("Accept", "application/json")
                 .send()
-                .await?;
+                .await?
+                // reqwest only reports a status error via `Kind::Status`, which
+                // `error_for_status` produces. Without this the retry policy
+                // sees `Ok(response)` for a 503 and its 5xx branch is dead code.
+                .error_for_status()?;
             Ok(response)
         })
     }
@@ -86,10 +96,27 @@ impl BbmClient {
     /// Create a new client with a custom base URL (useful for testing).
     pub fn with_base_url(base_url: &str) -> Self {
         Self {
-            http: Client::new(),
+            http: Self::build_http(DEFAULT_TIMEOUT),
             base_url: base_url.trim_end_matches('/').to_owned(),
             retry_policy: RetryPolicy::default(),
         }
+    }
+
+    /// Set the per-request timeout. Without one, a server that accepts a
+    /// connection and then goes silent stalls the caller indefinitely.
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.http = Self::build_http(timeout);
+        self
+    }
+
+    fn build_http(timeout: std::time::Duration) -> Client {
+        Client::builder()
+            .timeout(timeout)
+            .connect_timeout(DEFAULT_CONNECT_TIMEOUT.min(timeout))
+            .build()
+            // The builder only fails on TLS backend initialisation, which
+            // cannot vary at runtime for a fixed feature set.
+            .expect("failed to build HTTP client")
     }
 
     /// Set a custom retry policy.
@@ -123,7 +150,9 @@ impl BbmClient {
 
         if !content_type.contains("application/json") {
             let body = response.text().await.unwrap_or_default();
-            let preview = &body[..body.len().min(200)];
+            // Take characters, not bytes: a byte-index cut can land inside a
+            // multi-byte character and panic.
+            let preview: String = body.chars().take(200).collect();
             return Err(BbmError::Api(format!(
                 "{path} returned non-JSON response (Content-Type: {content_type}): {preview}"
             )));
@@ -184,5 +213,89 @@ impl BbmClient {
 impl Default for BbmClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{http_response, StubServer};
+
+    /// A German error page is full of multi-byte characters, so the 200th byte
+    /// of a non-JSON body regularly lands mid-character. Slicing on a raw byte
+    /// index panics there.
+    #[tokio::test]
+    async fn non_json_body_with_multibyte_char_at_cutoff_does_not_panic() {
+        // 199 ASCII bytes, then 'ä' occupying bytes 199..201. A cut at byte 200
+        // is not a character boundary.
+        let body = format!("{}ä", "a".repeat(199));
+        assert!(!body.is_char_boundary(200), "test fixture is wrong");
+
+        let server = StubServer::serve_raw(http_response(200, "text/html", &body)).await;
+        let client = BbmClient::with_base_url(&server.base_url);
+
+        let err = client
+            .get_providers()
+            .await
+            .expect_err("non-JSON response must be an error");
+
+        assert!(
+            err.to_string().contains("non-JSON"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// `RetryPolicy` documents retrying 5xx, but reqwest only reports a status
+    /// error when `error_for_status` is called. Without it the retry layer sees
+    /// `Ok(response)` and never fires.
+    #[tokio::test]
+    async fn server_errors_are_retried() {
+        let server =
+            StubServer::serve_raw(http_response(503, "application/json", r#"{"err":1}"#)).await;
+        let client = BbmClient::with_base_url(&server.base_url);
+
+        let err = client
+            .get_providers()
+            .await
+            .expect_err("503 must surface as an error");
+
+        // Default policy is 3 attempts: the initial call plus 3 retries.
+        assert_eq!(
+            server.hits(),
+            4,
+            "expected 4 attempts (1 initial + 3 retries), got {}: {err}",
+            server.hits()
+        );
+    }
+
+    /// `Client::new()` has no timeout, so a server that accepts the connection
+    /// and then goes silent stalls the caller forever with no cancellation
+    /// path. It also means reqwest never produces a timeout error, which makes
+    /// the retry policy's `is_timeout` branch unreachable.
+    #[tokio::test]
+    async fn request_to_silent_server_times_out() {
+        let server = crate::testutil::serve_never_responds().await;
+        let client = BbmClient::with_base_url(&server.base_url)
+            .with_timeout(std::time::Duration::from_millis(200));
+
+        // The outer bound is the test's own safety net: if the client has no
+        // timeout of its own, this elapses and the test fails.
+        let outcome =
+            tokio::time::timeout(std::time::Duration::from_secs(10), client.get_providers()).await;
+
+        let inner = outcome.expect("client did not enforce its own timeout");
+        assert!(inner.is_err(), "a silent server must surface as an error");
+    }
+
+    /// A 404 is a client error and must not be retried.
+    #[tokio::test]
+    async fn client_errors_are_not_retried() {
+        let server =
+            StubServer::serve_raw(http_response(404, "application/json", r#"{"err":1}"#)).await;
+        let client = BbmClient::with_base_url(&server.base_url);
+
+        let _ = client.get_providers().await.expect_err("404 must error");
+
+        assert_eq!(server.hits(), 1, "404 must not be retried");
     }
 }

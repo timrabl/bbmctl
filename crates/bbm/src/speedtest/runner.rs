@@ -33,6 +33,9 @@ use super::{SpeedTestConfig, SpeedTestResult};
 
 const UPLOAD_CHUNK_SIZE: usize = 131_072;
 const LATENCY_SAMPLES: u32 = 10;
+/// Per-sample TCP connect timeout. Without it, a black-holing host blocks for
+/// the OS SYN timeout on every sample.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Runs speed tests (download, upload, latency) against a configured peer.
 pub struct SpeedTestRunner {
@@ -45,11 +48,17 @@ impl SpeedTestRunner {
     /// Create a new runner with the given configuration.
     pub fn new(config: SpeedTestConfig) -> Result<Self> {
         let http = Client::builder()
-            .timeout(Duration::from_secs(config.duration_secs + 5))
+            .timeout(Duration::from_secs(config.duration_secs.saturating_add(5)))
             .http1_only()
             .build()
             .map_err(BbmError::Http)?;
-        let url = format!("https://{}/", config.peer);
+        // Honour an explicit scheme so a peer can be addressed over plain HTTP
+        // or on a non-default port; otherwise default to HTTPS.
+        let url = if config.peer.contains("://") {
+            format!("{}/", config.peer.trim_end_matches('/'))
+        } else {
+            format!("https://{}/", config.peer)
+        };
         Ok(Self { http, config, url })
     }
 
@@ -104,12 +113,25 @@ impl SpeedTestRunner {
                         break;
                     }
                     match http.get(&url).timeout(remaining).send().await {
-                        Ok(response) => match response.bytes().await {
-                            Ok(b) => {
-                                bytes.fetch_add(b.len() as u64, Ordering::Relaxed);
+                        Ok(mut response) => {
+                            if !response.status().is_success() {
+                                break;
                             }
-                            Err(_) => break,
-                        },
+                            // Count each chunk as it arrives. Buffering the
+                            // whole body via `bytes()` would discard every
+                            // byte of a request the deadline cuts off, and
+                            // would hold the entire payload in memory per
+                            // stream.
+                            // Ends on body completion (`Ok(None)`) or a mid-
+                            // stream error; either way whatever arrived has
+                            // already been counted.
+                            while let Ok(Some(chunk)) = response.chunk().await {
+                                bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                                if start.elapsed() >= deadline {
+                                    break;
+                                }
+                            }
+                        }
                         Err(_) => break,
                     }
                 }
@@ -118,6 +140,16 @@ impl SpeedTestRunner {
 
         while futures.next().await.is_some() {}
 
+        // Check "no data" before "too short": when every stream fails
+        // immediately both are true, and the transfer failure is the useful
+        // diagnosis.
+        let bytes = total_bytes.load(Ordering::Relaxed);
+        if bytes == 0 {
+            return Err(BbmError::TestFailed(
+                "download moved no data (peer unreachable or rejecting requests)".into(),
+            ));
+        }
+
         let elapsed = start.elapsed().as_secs_f64();
         if elapsed < 0.1 {
             return Err(BbmError::TestFailed(
@@ -125,7 +157,6 @@ impl SpeedTestRunner {
             ));
         }
 
-        let bytes = total_bytes.load(Ordering::Relaxed);
         Ok((bytes as f64 * 8.0) / 1000.0 / elapsed)
     }
 
@@ -156,9 +187,14 @@ impl SpeedTestRunner {
                         .send()
                         .await
                     {
-                        Ok(_) => {
+                        // `send()` resolves to `Ok` for any status, including
+                        // 4xx/5xx. Only a request the peer actually accepted
+                        // represents transferred payload.
+                        Ok(resp) if resp.status().is_success() => {
+                            let _ = resp.bytes().await;
                             bytes.fetch_add(UPLOAD_CHUNK_SIZE as u64, Ordering::Relaxed);
                         }
+                        Ok(_) => break,
                         Err(_) => break,
                     }
                 }
@@ -167,12 +203,18 @@ impl SpeedTestRunner {
 
         while futures.next().await.is_some() {}
 
+        let bytes = total_bytes.load(Ordering::Relaxed);
+        if bytes == 0 {
+            return Err(BbmError::TestFailed(
+                "upload moved no data (peer unreachable or rejecting requests)".into(),
+            ));
+        }
+
         let elapsed = start.elapsed().as_secs_f64();
         if elapsed < 0.1 {
             return Err(BbmError::TestFailed("upload measurement too short".into()));
         }
 
-        let bytes = total_bytes.load(Ordering::Relaxed);
         Ok((bytes as f64 * 8.0) / 1000.0 / elapsed)
     }
 
@@ -185,14 +227,37 @@ impl SpeedTestRunner {
             .ok_or_else(|| BbmError::TestFailed(format!("could not resolve {addr}")))?;
 
         let mut rtts = Vec::with_capacity(LATENCY_SAMPLES as usize);
+        let mut last_error: Option<String> = None;
 
         for _ in 0..LATENCY_SAMPLES {
             let start = Instant::now();
-            let stream = tokio::net::TcpStream::connect(resolved).await?;
-            let elapsed = start.elapsed();
-            drop(stream);
-            rtts.push(elapsed.as_secs_f64() * 1000.0);
+            // Bound each connect: against a black-holing host a bare connect
+            // blocks for the OS SYN timeout (~75s), so ten samples could hang
+            // for over twelve minutes with no upper bound.
+            let attempt =
+                tokio::time::timeout(CONNECT_TIMEOUT, tokio::net::TcpStream::connect(resolved))
+                    .await;
+
+            match attempt {
+                Ok(Ok(stream)) => {
+                    let elapsed = start.elapsed();
+                    drop(stream);
+                    rtts.push(elapsed.as_secs_f64() * 1000.0);
+                }
+                // Tolerate individual failures: one dropped packet on a
+                // congested line must not abort the whole suite.
+                Ok(Err(e)) => last_error = Some(e.to_string()),
+                Err(_) => last_error = Some(format!("connect timed out after {CONNECT_TIMEOUT:?}")),
+            }
+
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        if rtts.is_empty() {
+            let detail = last_error.unwrap_or_else(|| "no samples succeeded".to_string());
+            return Err(BbmError::TestFailed(format!(
+                "latency measurement failed against {addr}: {detail}"
+            )));
         }
 
         let avg = rtts.iter().sum::<f64>() / rtts.len() as f64;
@@ -204,5 +269,164 @@ impl SpeedTestRunner {
         };
 
         Ok((avg, jitter))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{http_response, StubServer};
+
+    fn config_for(base_url: &str) -> SpeedTestConfig {
+        SpeedTestConfig {
+            peer: base_url.to_string(),
+            rtt_peer: "127.0.0.1".to_string(),
+            duration_secs: 1,
+            port: port_of(base_url),
+            streams: 1,
+        }
+    }
+
+    fn port_of(base_url: &str) -> u16 {
+        base_url.rsplit(':').next().unwrap().parse().unwrap()
+    }
+
+    /// `duration_secs + 5` panics in debug and wraps to 4 in release. The
+    /// field is public, so a caller can reach this.
+    #[test]
+    fn extreme_duration_does_not_overflow() {
+        let config = SpeedTestConfig {
+            peer: "example.invalid".to_string(),
+            rtt_peer: "example.invalid".to_string(),
+            duration_secs: u64::MAX,
+            port: 443,
+            streams: 1,
+        };
+
+        // Must not panic.
+        let runner = SpeedTestRunner::new(config);
+        assert!(runner.is_ok(), "constructing the runner must not fail");
+    }
+
+    /// A closed port must produce a clear, attributable failure rather than a
+    /// bare io error propagated out of the first sample.
+    #[tokio::test]
+    async fn latency_against_closed_port_fails_clearly() {
+        // Bind then drop, so the port is almost certainly unused.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let config = SpeedTestConfig {
+            peer: "http://127.0.0.1:1".to_string(),
+            rtt_peer: "127.0.0.1".to_string(),
+            duration_secs: 1,
+            port,
+            streams: 1,
+        };
+        let runner = SpeedTestRunner::new(config).unwrap();
+
+        let err = runner
+            .measure_latency()
+            .await
+            .expect_err("a closed port must fail");
+
+        assert!(
+            err.to_string().contains("latency"),
+            "error should identify the latency stage, got: {err}"
+        );
+    }
+
+    /// One lost sample must not abort the whole suite -- a single dropped
+    /// packet is normal on a congested line.
+    #[tokio::test]
+    async fn latency_tolerates_some_failed_samples() {
+        let server = StubServer::serve_raw(http_response(200, "text/plain", "ok")).await;
+        let config = config_for(&server.base_url);
+        let runner = SpeedTestRunner::new(config).unwrap();
+
+        let (avg, jitter) = runner
+            .measure_latency()
+            .await
+            .expect("a reachable peer must yield a latency reading");
+
+        assert!(avg >= 0.0, "avg latency must be non-negative, got {avg}");
+        assert!(jitter >= 0.0, "jitter must be non-negative, got {jitter}");
+    }
+
+    /// `reqwest::send()` returns `Ok` for any HTTP status. Crediting a full
+    /// chunk for a 405 makes a server that rejects everything look fast --
+    /// the faster it rejects, the higher the reported rate.
+    #[tokio::test]
+    async fn upload_does_not_count_rejected_requests() {
+        let server = StubServer::serve_raw(http_response(405, "text/plain", "nope")).await;
+        let runner = SpeedTestRunner::new(config_for(&server.base_url)).unwrap();
+
+        let measured = runner.measure_upload().await;
+
+        let rate = measured.unwrap_or(0.0);
+        assert_eq!(
+            rate, 0.0,
+            "rejected uploads must not count toward throughput, got {rate} kbit/s"
+        );
+        assert!(server.hits() > 0, "stub server was never contacted");
+    }
+
+    /// Reporting "upload: 0.00 Mbit/s" as a successful result hides a total
+    /// failure -- the caller cannot distinguish a broken peer from a dead line.
+    #[tokio::test]
+    async fn upload_that_transfers_nothing_is_an_error() {
+        let server = StubServer::serve_raw(http_response(405, "text/plain", "nope")).await;
+        let runner = SpeedTestRunner::new(config_for(&server.base_url)).unwrap();
+
+        let err = runner
+            .measure_upload()
+            .await
+            .expect_err("a measurement that moved no bytes must not be Ok");
+
+        assert!(
+            err.to_string().contains("no data"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// `response.bytes()` buffers the whole body before anything is counted,
+    /// and the request timeout covers that read. A request cut off by the
+    /// deadline therefore contributes zero bytes -- so when the payload is
+    /// larger than one measurement window (a fast line hitting a real
+    /// speedtest endpoint), no request ever completes and the measurement
+    /// silently reports nothing transferred.
+    #[tokio::test]
+    async fn download_counts_bytes_from_requests_cut_off_by_the_deadline() {
+        // 64 KiB every 20ms, body declared as 1 GiB: never finishes within 1s.
+        let server = crate::testutil::serve_endless_stream(65_536, 20).await;
+        let runner = SpeedTestRunner::new(config_for(&server.base_url)).unwrap();
+
+        let kbps = runner
+            .measure_download()
+            .await
+            .expect("partial transfers must still count as data");
+
+        assert!(
+            kbps > 0.0,
+            "expected a positive rate from a partially transferred stream, got {kbps}"
+        );
+    }
+
+    /// Same contract on the download side.
+    #[tokio::test]
+    async fn download_that_transfers_nothing_is_an_error() {
+        let server = StubServer::serve_raw(http_response(500, "text/plain", "")).await;
+        let runner = SpeedTestRunner::new(config_for(&server.base_url)).unwrap();
+
+        let err = runner
+            .measure_download()
+            .await
+            .expect_err("a measurement that moved no bytes must not be Ok");
+
+        assert!(
+            err.to_string().contains("no data"),
+            "unexpected error: {err}"
+        );
     }
 }

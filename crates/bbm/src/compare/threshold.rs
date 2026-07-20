@@ -63,9 +63,40 @@ impl ThresholdResult {
                 threshold_display: None,
                 measured_kbps: measured,
                 measured_display: fmt_mbps(measured),
-                met: true,
+                // No threshold means the term could not be checked. Reporting
+                // `true` would claim a contract term was satisfied when it was
+                // never verified.
+                met: false,
                 percent: 0.0,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A missing threshold means "could not be checked", not "passed". Folding
+    /// it into `met: true` tells the user their line satisfies a contract term
+    /// that was never actually verified -- and `Plan::parse_speed` discards
+    /// parse errors, so an API returning "" or "50,000" lands here.
+    #[test]
+    fn absent_threshold_is_not_reported_as_met() {
+        let result = ThresholdResult::check("download >= min", 50_000.0, None);
+
+        assert!(
+            !result.met,
+            "an unverifiable threshold must not be reported as met"
+        );
+    }
+
+    #[test]
+    fn present_threshold_still_compares_normally() {
+        let pass = ThresholdResult::check("download >= min", 50_000.0, Some(40_000.0));
+        assert!(pass.met);
+
+        let fail = ThresholdResult::check("download >= min", 30_000.0, Some(40_000.0));
+        assert!(!fail.met);
     }
 }

@@ -29,6 +29,9 @@ pub mod retry;
 pub mod speed;
 pub mod speedtest;
 
+#[cfg(test)]
+mod testutil;
+
 pub use client::BbmClient;
 pub use compare::{ComparisonResult, ComparisonRow, ThresholdResult};
 pub use error::{BbmError, Result};
