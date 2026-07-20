@@ -5,6 +5,64 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/timrabl/bbmctl/compare/v0.1.0...v0.1.1) - 2026-07-20
+
+### Bug Fixes
+
+- *(bbm)* correct speed measurement, retries, and contract comparison ([#24](https://github.com/timrabl/bbmctl/pull/24))
+
+The `bbm` library entries above are what is published to crates.io. The
+`bbmctl` binaries attached to this release also contain the following, which
+release-plz does not track because `bbmctl` and `bbmctl-database` are not
+published packages.
+
+#### Library (`bbm`)
+
+- Download measurements discarded every byte of a request cut off by the
+  deadline, so a payload larger than one measurement window reported
+  `0.00 Mbit/s` as a success
+- Upload measurements credited a full chunk for rejected requests, so a peer
+  answering `405` reported multi-gigabit throughput
+- A measurement that transferred nothing returned success instead of an error
+- 5xx responses were never retried; the retry policy's status branch was
+  unreachable
+- Non-JSON responses could panic when the 200-byte preview cut a multi-byte
+  character
+- Retry backoff collapsed to zero at high attempt counts, and is now capped
+- Latency measurement had no connect timeout and aborted on a single lost
+  sample
+- The API client had no request or connect timeout
+- Unparseable contract thresholds were reported as met, which could show a
+  line as `ALL PASS` against terms that were never checked
+
+#### CLI (`bbmctl`)
+
+- `test --every` could not be combined with `--provider`
+- Scheduled tests drifted by the duration of every run, aborted on any
+  transient error, and ignored Ctrl+C while a test was running
+- `provider switch` had no effect on any other command
+- The Prometheus exporter bound `0.0.0.0` without authentication, and a single
+  half-open connection blocked every scrape; it now defaults to `127.0.0.1`
+  and serves each connection independently
+- `history export` and `history list -f csv` emitted incompatible schemas, and
+  `list -f csv` produced structurally invalid output that aborted mid-write
+- CSV import ignored the header row, accepted invalid timestamps that
+  permanently broke `history summary` and the exporter, and was not atomic
+- CSV export did not neutralise spreadsheet formula prefixes
+- `compare` required `--provider` even when a provider was configured
+- The `streams` and `duration` config keys were parsed but never applied
+- A misplaced or misspelled config key was silently ignored
+
+#### Storage
+
+- A single unparseable timestamp permanently broke `history summary` and the
+  metrics exporter
+- Two timestamp formats were written to the same column, so lexicographic
+  ordering did not match chronological order; existing rows are normalised by
+  migration
+- Added the missing indexes on `measurements.timestamp`,
+  `measurements.campaign_id`, and `campaigns.status`
+
 ## [0.1.0] - 2026-04-03
 
 ### Features
