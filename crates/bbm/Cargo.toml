@@ -1,9 +1,9 @@
 [package]
 name = "bbm"
-version = "0.1.1"
-edition = "2021"
-authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
-license = "MIT"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Async Rust client library for the German Breitbandmessung (broadband measurement) API"
 homepage = "https://github.com/timrabl/bbmctl"
 repository = "https://github.com/timrabl/bbmctl"
@@ -11,7 +11,7 @@ documentation = "https://docs.rs/bbm"
 readme = "../../README.md"
 keywords = ["breitbandmessung", "speedtest", "broadband", "bundesnetzagentur", "internet"]
 categories = ["api-bindings", "network-programming"]
-rust-version = "1.75"
+rust-version.workspace = true
 exclude = [
   "docs/*",
   ".github/*",

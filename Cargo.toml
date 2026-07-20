@@ -1,3 +1,14 @@
 [workspace]
 members = ["crates/bbm", "crates/bbmctl", "crates/bbmctl-database"]
 resolver = "2"
+
+# One version for all three crates, so the binary, the .deb and the published
+# library can never disagree. release-plz only bumps `bbm` (the others are
+# `release = false`), which previously left bbmctl reporting 0.1.0 in a v0.1.1
+# release -- and made the .deb compare equal to a genuine 0.1.0 package.
+[workspace.package]
+version = "0.1.1"
+edition = "2021"
+authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
+license = "MIT"
+rust-version = "1.75"

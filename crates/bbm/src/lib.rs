@@ -32,6 +32,9 @@ pub mod speedtest;
 #[cfg(test)]
 mod testutil;
 
+/// The crate version, so dependants can assert they were built in lockstep.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub use client::BbmClient;
 pub use compare::{ComparisonResult, ComparisonRow, ThresholdResult};
 pub use error::{BbmError, Result};

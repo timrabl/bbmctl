@@ -87,3 +87,26 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod version_tests {
+    /// All workspace crates must report one version.
+    ///
+    /// release-plz only bumps `bbm` (the others are `release = false`), so
+    /// before the versions were inherited from `[workspace.package]` the
+    /// v0.1.1 release shipped a binary reporting `bbmctl 0.1.0` and a
+    /// `bbmctl_0.1.0-1_amd64.deb`. For apt that is worse than cosmetic: a
+    /// genuine 0.1.0 package compares equal and dpkg refuses to upgrade.
+    ///
+    /// Both sides are compile-time constants, so reintroducing a literal
+    /// `version = "..."` in either manifest fails the build.
+    #[test]
+    fn cli_and_library_versions_match() {
+        assert_eq!(
+            env!("CARGO_PKG_VERSION"),
+            bbm::VERSION,
+            "bbmctl and bbm must share the workspace version; \
+             check that neither Cargo.toml has re-declared `version`"
+        );
+    }
+}
