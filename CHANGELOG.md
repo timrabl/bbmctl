@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2](https://github.com/timrabl/bbmctl/compare/v0.1.1...v0.1.2) - 2026-07-20
+
+### Bug Fixes
+
+- share one version across all workspace crates ([#37](https://github.com/timrabl/bbmctl/pull/37))
+
+The `bbm` entry above is what is published to crates.io. The `bbmctl` binaries
+attached to this release also contain the following, which release-plz does not
+track because `bbmctl` and `bbmctl-database` are not published packages.
+
+This is the first release whose binary and `.deb` report the correct version:
+v0.1.1 shipped artifacts that identified themselves as `0.1.0` ([#37](https://github.com/timrabl/bbmctl/pull/37)).
+
+#### CLI (`bbmctl`)
+
+- The Prometheus `speedtest_measurements_total` counter was renamed to the
+  `speedtest_measurements` gauge, since `history purge`/`delete` reduce it and
+  a decreasing counter reads as a reset; non-finite samples now render as
+  `+Inf`/`-Inf`/`NaN` instead of the `inf`/`NaN` that made a scrape
+  unparseable ([#40](https://github.com/timrabl/bbmctl/pull/40))
+- Manual Homebrew formula bumps are now possible via `workflow_dispatch`
+  ([#38](https://github.com/timrabl/bbmctl/pull/38))
+
+#### Storage
+
+- `campaign record` now runs its measurement insert and completion update in a
+  single transaction, and a partial unique index enforces at most one active
+  campaign in the database; `settings` writes are now an atomic upsert
+  ([#41](https://github.com/timrabl/bbmctl/pull/41))
+
+> **Prometheus users:** `speedtest_measurements_total` is renamed to
+> `speedtest_measurements`. Update any dashboards or alerts that reference it.
+
 ## [0.1.1](https://github.com/timrabl/bbmctl/compare/v0.1.0...v0.1.1) - 2026-07-20
 
 ### Bug Fixes
