@@ -23,5 +23,5 @@ mod measurement;
 mod settings;
 
 pub use campaign::CampaignRepo;
-pub use measurement::MeasurementRepo;
+pub use measurement::{MeasurementRepo, NewMeasurement};
 pub use settings::SettingsRepo;

@@ -18,12 +18,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::info;
 
 use super::make_writer;
 use crate::cli::HistoryCommands;
 use crate::config::ResolvedConfig;
+use crate::utils::csv_row::{ImportRow, MeasurementCsvRow};
 use crate::utils::output;
 use bbmctl_database::Database;
 
@@ -48,7 +49,21 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
         HistoryCommands::List(args) => {
             let measurements = db.measurements().history(Some(args.limit as u64)).await?;
             let mut writer = make_writer(&args.list)?;
-            output::write_output(&mut writer, &measurements, &args.list.format)?;
+            match args.list.format {
+                // The entity's `skip_serializing_if` attributes make the
+                // serialized shape vary per row, so the csv writer took its
+                // header from the first record and then aborted with
+                // "found record with 7 fields, but the previous record has 5".
+                // A dedicated fixed-width row type avoids that.
+                crate::cli::OutputFormat::Csv | crate::cli::OutputFormat::CsvHeadless => {
+                    let rows: Vec<MeasurementCsvRow> = measurements
+                        .iter()
+                        .map(MeasurementCsvRow::from_model)
+                        .collect();
+                    output::write_output(&mut writer, &rows, &args.list.format)?;
+                }
+                _ => output::write_output(&mut writer, &measurements, &args.list.format)?,
+            }
         }
         HistoryCommands::Summary(args) => match db.measurements().summary().await? {
             Some(summary) => {
@@ -94,54 +109,40 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
                 None => Box::new(std::io::stdout().lock()),
             };
             let mut wtr = csv::Writer::from_writer(writer);
-            wtr.write_record([
-                "timestamp",
-                "download_kbps",
-                "upload_kbps",
-                "latency_ms",
-                "provider_id",
-                "plan_id",
-            ])?;
+            // Same row type as `history list -f csv`, so the two formats the
+            // tool emits are identical and round-trip through `import`.
             for m in &measurements {
-                wtr.write_record([
-                    &m.timestamp,
-                    &m.download_kbps.to_string(),
-                    &m.upload_kbps.to_string(),
-                    &m.latency_ms.to_string(),
-                    &m.provider_id.map(|v| v.to_string()).unwrap_or_default(),
-                    &m.plan_id.clone().unwrap_or_default(),
-                ])?;
+                wtr.serialize(MeasurementCsvRow::from_model(m))?;
             }
             wtr.flush()?;
             info!("exported {} measurements", measurements.len());
         }
         HistoryCommands::Import(args) => {
-            let mut rdr = csv::Reader::from_path(&args.file)?;
-            let mut count = 0u64;
-            for result in rdr.records() {
-                let record = result?;
-                let timestamp = record.get(0).unwrap_or_default();
-                let download_kbps: f64 = record.get(1).unwrap_or("0").parse()?;
-                let upload_kbps: f64 = record.get(2).unwrap_or("0").parse()?;
-                let latency_ms: f64 = record.get(3).unwrap_or("0").parse()?;
-                let provider_id: Option<i64> =
-                    record
-                        .get(4)
-                        .and_then(|s| if s.is_empty() { None } else { s.parse().ok() });
-                let plan_id: Option<&str> = record.get(5).filter(|s| !s.is_empty());
+            let mut rdr = csv::Reader::from_path(&args.file)
+                .with_context(|| format!("failed to open {}", args.file))?;
+            let headers = rdr
+                .headers()
+                .with_context(|| format!("failed to read header row of {}", args.file))?
+                .clone();
 
-                db.measurements()
-                    .record_with_timestamp(
-                        timestamp,
-                        download_kbps,
-                        upload_kbps,
-                        latency_ms,
-                        provider_id,
-                        plan_id,
-                    )
-                    .await?;
-                count += 1;
+            // Parse and validate everything before writing anything: a parse
+            // error on row 500 used to leave 499 rows committed with no
+            // rollback and no indication of how far it had got.
+            let mut rows = Vec::new();
+            for (i, result) in rdr.records().enumerate() {
+                let record = result.with_context(|| format!("{}: malformed CSV", args.file))?;
+                // +2: one for the header row, one for 1-based numbering.
+                let line = i + 2;
+                rows.push(
+                    ImportRow::from_record(&headers, &record, line)
+                        .with_context(|| format!("{}: line {line}", args.file))?,
+                );
             }
+
+            let count = rows.len() as u64;
+            let to_insert: Vec<bbmctl_database::NewMeasurement> =
+                rows.iter().map(Into::into).collect();
+            db.measurements().import_all(&to_insert).await?;
             info!("imported {count} measurements");
         }
         HistoryCommands::Trend(args) => {

@@ -30,7 +30,7 @@ use sea_orm_migration::MigratorTrait;
 
 use migrations::Migrator;
 
-pub use repositories::{CampaignRepo, MeasurementRepo, SettingsRepo};
+pub use repositories::{CampaignRepo, MeasurementRepo, NewMeasurement, SettingsRepo};
 
 /// Canonical format for every timestamp written to the database.
 ///

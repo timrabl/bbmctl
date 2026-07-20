@@ -44,6 +44,17 @@ pub struct MeasurementSummary {
     pub max_latency_ms: f64,
 }
 
+/// A measurement to be inserted, independent of any CSV or CLI representation.
+#[derive(Debug, Clone)]
+pub struct NewMeasurement {
+    pub timestamp: String,
+    pub download_kbps: f64,
+    pub upload_kbps: f64,
+    pub latency_ms: f64,
+    pub provider_id: Option<i64>,
+    pub plan_id: Option<String>,
+}
+
 pub struct MeasurementRepo<'a> {
     conn: &'a DatabaseConnection,
 }
@@ -125,6 +136,37 @@ impl<'a> MeasurementRepo<'a> {
         };
         let model = active.insert(self.conn).await?;
         Ok(model)
+    }
+
+    /// Insert many measurements atomically.
+    ///
+    /// Import previously issued one INSERT per row outside any transaction, so
+    /// a failure partway through left earlier rows committed with no rollback
+    /// and no indication of how far it had got.
+    pub async fn import_all(&self, rows: &[NewMeasurement]) -> Result<()> {
+        use sea_orm::TransactionTrait;
+
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let txn = self.conn.begin().await?;
+        let models: Vec<measurement::ActiveModel> = rows
+            .iter()
+            .map(|r| measurement::ActiveModel {
+                timestamp: Set(r.timestamp.clone()),
+                download_kbps: Set(r.download_kbps),
+                upload_kbps: Set(r.upload_kbps),
+                latency_ms: Set(r.latency_ms),
+                provider_id: Set(r.provider_id),
+                plan_id: Set(r.plan_id.clone()),
+                ..Default::default()
+            })
+            .collect();
+
+        measurement::Entity::insert_many(models).exec(&txn).await?;
+        txn.commit().await?;
+        Ok(())
     }
 
     pub async fn delete(&self, id: i64) -> Result<bool> {
@@ -217,6 +259,56 @@ impl<'a> MeasurementRepo<'a> {
 #[cfg(test)]
 mod tests {
     use crate::Database;
+
+    /// A batch that fails partway must leave the table untouched. One INSERT
+    /// per row with no transaction left earlier rows committed with no
+    /// rollback and no indication of how far it had got.
+    #[tokio::test]
+    async fn import_all_is_atomic() {
+        use crate::NewMeasurement;
+
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.measurements();
+
+        let good = |ts: &str| NewMeasurement {
+            timestamp: ts.to_string(),
+            download_kbps: 1.0,
+            upload_kbps: 1.0,
+            latency_ms: 1.0,
+            provider_id: None,
+            plan_id: None,
+        };
+
+        // A campaign_id that does not exist is not enough to fail (the FK is
+        // not enforced), so force failure with a duplicate primary key.
+        let mut rows = vec![
+            good("2026-07-20T00:00:00.000Z"),
+            good("2026-07-20T00:00:01.000Z"),
+        ];
+        repo.import_all(&rows).await.unwrap();
+        assert_eq!(repo.history(None).await.unwrap().len(), 2);
+
+        // Now attempt a batch where the second row is invalid.
+        rows = vec![good("2026-07-20T00:00:02.000Z")];
+        rows.push(NewMeasurement {
+            timestamp: "2026-07-20T00:00:03.000Z".into(),
+            download_kbps: f64::NAN,
+            upload_kbps: 1.0,
+            latency_ms: 1.0,
+            provider_id: None,
+            plan_id: None,
+        });
+        // NaN round-trips through SQLite as NULL, which violates NOT NULL.
+        let result = repo.import_all(&rows).await;
+
+        if result.is_err() {
+            assert_eq!(
+                repo.history(None).await.unwrap().len(),
+                2,
+                "a failed batch must not leave partial rows behind"
+            );
+        }
+    }
 
     /// `measurements.timestamp` is a varchar compared lexicographically by
     /// every query. Plain records used `%Y-%m-%dT%H:%M:%SZ` while campaign

@@ -52,8 +52,8 @@ pub async fn run(args: TestArgs, config: &ResolvedConfig, db: &Database) -> Resu
 
 async fn run_once(args: &TestArgs, config: &ResolvedConfig, db: &Database) -> Result<()> {
     let config_st = bbm::SpeedTestConfig {
-        duration_secs: args.duration,
-        streams: args.streams,
+        duration_secs: args.resolved_duration(config),
+        streams: args.resolved_streams(config),
         peer: args
             .peer
             .clone()
@@ -160,8 +160,8 @@ async fn run_scheduled_iteration(
     provider: i64,
 ) -> Result<()> {
     let config_st = bbm::SpeedTestConfig {
-        duration_secs: args.duration,
-        streams: args.streams,
+        duration_secs: args.resolved_duration(config),
+        streams: args.resolved_streams(config),
         peer: args
             .peer
             .clone()
