@@ -42,17 +42,19 @@ mod tests {
     #[ignore] // hits live API
     async fn test_get_providers() {
         let client = BbmClient::new();
-        let providers = client.get_providers().await.unwrap();
-        assert!(!providers.is_empty());
+        crate::testutil::assert_graceful(client.get_providers().await, |providers| {
+            assert!(!providers.is_empty());
+        });
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore] // hits live API
     async fn test_get_provider_by_id() {
         let client = BbmClient::new();
         for &id in TESTING_PROVIDER_IDS {
-            let provider = client.get_provider_by_id(id).await.unwrap();
-            assert_eq!(provider.key, id.to_string());
+            crate::testutil::assert_graceful(client.get_provider_by_id(id).await, |provider| {
+                assert_eq!(provider.key, id.to_string());
+            });
         }
     }
 }
