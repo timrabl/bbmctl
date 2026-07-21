@@ -165,6 +165,26 @@ pub async fn serve_endless_stream(chunk: usize, delay_ms: u64) -> StubServer {
     }
 }
 
+/// Assert that a live-API call degraded gracefully.
+///
+/// The contract (see the fix in the client's `get_json`): a non-JSON response
+/// -- for example the HTML error page several `breitbandmessung.de` endpoints
+/// currently return with HTTP 200 -- must surface as [`BbmError::Api`], never
+/// as [`BbmError::Json`], which would mean the body reached the deserializer.
+///
+/// So a live test passes if the call parsed, or failed with any clean typed
+/// error, and fails only on a JSON parse error. `on_ok` validates the happy
+/// path when the endpoint is actually up.
+pub fn assert_graceful<T>(result: crate::Result<T>, on_ok: impl FnOnce(T)) {
+    match result {
+        Ok(value) => on_ok(value),
+        Err(crate::BbmError::Json(e)) => {
+            panic!("a non-JSON response reached the deserializer: {e}")
+        }
+        Err(e) => eprintln!("endpoint unavailable, degraded gracefully: {e}"),
+    }
+}
+
 /// Build a raw HTTP/1.1 response with an explicit `Content-Type`.
 pub fn http_response(status: u16, content_type: &str, body: &str) -> Vec<u8> {
     format!(

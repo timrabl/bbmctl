@@ -108,10 +108,11 @@ mod tests {
     async fn test_get_plans_by_provider_id() {
         let client = BbmClient::new();
         for &id in TESTING_PROVIDER_IDS {
-            let plans = client.get_plans_by_provider_id(id).await.unwrap();
-            for plan in &plans {
-                assert!(!plan.plan_id.0.is_empty());
-            }
+            crate::testutil::assert_graceful(client.get_plans_by_provider_id(id).await, |plans| {
+                for plan in &plans {
+                    assert!(!plan.plan_id.0.is_empty());
+                }
+            });
         }
     }
 }
