@@ -18,7 +18,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use sea_orm::{
     ActiveModelTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryOrder, QuerySelect,
     Set,
@@ -54,6 +54,48 @@ pub struct NewMeasurement {
     pub provider_id: Option<i64>,
     pub plan_id: Option<String>,
 }
+
+/// What to do when an imported measurement's timestamp already exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DuplicateStrategy {
+    /// Reject the whole import (the default). A repeated timestamp is treated
+    /// as a likely mistake rather than a second measurement in the same
+    /// millisecond.
+    Error,
+    /// Skip colliding rows, insert the rest.
+    Skip,
+    /// Overwrite existing rows with the imported values.
+    Update,
+}
+
+/// Counts from an import, so the CLI can report what happened.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ImportOutcome {
+    pub inserted: u64,
+    pub skipped: u64,
+    pub updated: u64,
+}
+
+/// Returned (via `anyhow`) when [`DuplicateStrategy::Error`] hits a collision.
+/// Carries the 0-based row index so the caller can map it back to a source
+/// line number.
+#[derive(Debug, Clone)]
+pub struct DuplicateTimestamp {
+    pub index: usize,
+    pub timestamp: String,
+}
+
+impl std::fmt::Display for DuplicateTimestamp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "a measurement already exists at {} (pass --on-duplicate skip or update to override)",
+            self.timestamp
+        )
+    }
+}
+
+impl std::error::Error for DuplicateTimestamp {}
 
 pub struct MeasurementRepo<'a> {
     conn: &'a DatabaseConnection,
@@ -138,35 +180,90 @@ impl<'a> MeasurementRepo<'a> {
         Ok(model)
     }
 
-    /// Insert many measurements atomically.
+    /// Insert many measurements atomically, applying `strategy` when an
+    /// imported timestamp already exists (in the database or earlier in the
+    /// same batch).
     ///
-    /// Import previously issued one INSERT per row outside any transaction, so
-    /// a failure partway through left earlier rows committed with no rollback
-    /// and no indication of how far it had got.
-    pub async fn import_all(&self, rows: &[NewMeasurement]) -> Result<()> {
-        use sea_orm::TransactionTrait;
+    /// The whole operation runs in one transaction: on the `Error` strategy a
+    /// collision rolls everything back, so a partially-applied import is never
+    /// left behind.
+    pub async fn import_all(
+        &self,
+        rows: &[NewMeasurement],
+        strategy: DuplicateStrategy,
+    ) -> Result<ImportOutcome> {
+        use sea_orm::{ColumnTrait, QueryFilter, TransactionTrait};
+        use std::collections::HashSet;
 
+        let mut outcome = ImportOutcome::default();
         if rows.is_empty() {
-            return Ok(());
+            return Ok(outcome);
         }
 
         let txn = self.conn.begin().await?;
-        let models: Vec<measurement::ActiveModel> = rows
-            .iter()
-            .map(|r| measurement::ActiveModel {
-                timestamp: Set(r.timestamp.clone()),
-                download_kbps: Set(r.download_kbps),
-                upload_kbps: Set(r.upload_kbps),
-                latency_ms: Set(r.latency_ms),
-                provider_id: Set(r.provider_id),
-                plan_id: Set(r.plan_id.clone()),
-                ..Default::default()
-            })
+
+        // Snapshot which incoming timestamps already exist, in one query.
+        let incoming: Vec<String> = rows.iter().map(|r| r.timestamp.clone()).collect();
+        let mut present: HashSet<String> = measurement::Entity::find()
+            .filter(measurement::Column::Timestamp.is_in(incoming))
+            .all(&txn)
+            .await?
+            .into_iter()
+            .map(|m| m.timestamp)
             .collect();
 
-        measurement::Entity::insert_many(models).exec(&txn).await?;
+        for (index, r) in rows.iter().enumerate() {
+            let is_duplicate = present.contains(&r.timestamp);
+
+            match strategy {
+                DuplicateStrategy::Error if is_duplicate => {
+                    // Returning without commit drops the transaction, which
+                    // rolls back anything inserted so far.
+                    return Err(DuplicateTimestamp {
+                        index,
+                        timestamp: r.timestamp.clone(),
+                    }
+                    .into());
+                }
+                DuplicateStrategy::Skip if is_duplicate => {
+                    outcome.skipped += 1;
+                }
+                DuplicateStrategy::Update if is_duplicate => {
+                    let existing = measurement::Entity::find()
+                        .filter(measurement::Column::Timestamp.eq(r.timestamp.clone()))
+                        .one(&txn)
+                        .await?
+                        .context("row vanished mid-import")?;
+                    let mut active: measurement::ActiveModel = existing.into();
+                    active.download_kbps = Set(r.download_kbps);
+                    active.upload_kbps = Set(r.upload_kbps);
+                    active.latency_ms = Set(r.latency_ms);
+                    active.provider_id = Set(r.provider_id);
+                    active.plan_id = Set(r.plan_id.clone());
+                    active.update(&txn).await?;
+                    outcome.updated += 1;
+                }
+                _ => {
+                    let active = measurement::ActiveModel {
+                        timestamp: Set(r.timestamp.clone()),
+                        download_kbps: Set(r.download_kbps),
+                        upload_kbps: Set(r.upload_kbps),
+                        latency_ms: Set(r.latency_ms),
+                        provider_id: Set(r.provider_id),
+                        plan_id: Set(r.plan_id.clone()),
+                        ..Default::default()
+                    };
+                    active.insert(&txn).await?;
+                    // So a later row with the same timestamp is seen as a
+                    // duplicate too.
+                    present.insert(r.timestamp.clone());
+                    outcome.inserted += 1;
+                }
+            }
+        }
+
         txn.commit().await?;
-        Ok(())
+        Ok(outcome)
     }
 
     pub async fn delete(&self, id: i64) -> Result<bool> {
@@ -260,6 +357,173 @@ impl<'a> MeasurementRepo<'a> {
 mod tests {
     use crate::Database;
 
+    fn nm(ts: &str, dl: f64) -> crate::NewMeasurement {
+        crate::NewMeasurement {
+            timestamp: ts.to_string(),
+            download_kbps: dl,
+            upload_kbps: 1.0,
+            latency_ms: 1.0,
+            provider_id: None,
+            plan_id: None,
+        }
+    }
+
+    /// The default strategy must reject an import that collides with an
+    /// existing row, and -- because it is transactional -- insert nothing.
+    #[tokio::test]
+    async fn import_error_strategy_rejects_duplicates_atomically() {
+        use crate::DuplicateStrategy;
+
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.measurements();
+
+        repo.record_with_timestamp("2026-07-20T00:00:00.000Z", 100.0, 1.0, 1.0, None, None)
+            .await
+            .unwrap();
+
+        // Second row collides with the row above.
+        let rows = vec![
+            nm("2026-07-20T00:00:01.000Z", 200.0),
+            nm("2026-07-20T00:00:00.000Z", 999.0),
+        ];
+
+        let err = repo
+            .import_all(&rows, DuplicateStrategy::Error)
+            .await
+            .expect_err("a colliding import must be rejected");
+
+        let dup = err
+            .downcast_ref::<crate::DuplicateTimestamp>()
+            .expect("error should be a DuplicateTimestamp");
+        assert_eq!(dup.index, 1, "the second row is the duplicate");
+        assert_eq!(dup.timestamp, "2026-07-20T00:00:00.000Z");
+
+        // Atomic: the non-colliding first row must NOT have been inserted.
+        assert_eq!(repo.history(None).await.unwrap().len(), 1);
+    }
+
+    /// Skip inserts the new rows and silently drops the colliding ones.
+    #[tokio::test]
+    async fn import_skip_strategy_inserts_new_and_skips_existing() {
+        use crate::DuplicateStrategy;
+
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.measurements();
+
+        repo.record_with_timestamp("2026-07-20T00:00:00.000Z", 100.0, 1.0, 1.0, None, None)
+            .await
+            .unwrap();
+
+        let rows = vec![
+            nm("2026-07-20T00:00:00.000Z", 999.0), // duplicate -> skipped
+            nm("2026-07-20T00:00:01.000Z", 200.0), // new -> inserted
+        ];
+
+        let outcome = repo
+            .import_all(&rows, DuplicateStrategy::Skip)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.inserted, 1);
+        assert_eq!(outcome.skipped, 1);
+        assert_eq!(outcome.updated, 0);
+        assert_eq!(repo.history(None).await.unwrap().len(), 2);
+
+        // The original row must be unchanged (skip does not overwrite).
+        let existing = repo
+            .history(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|m| m.timestamp == "2026-07-20T00:00:00.000Z")
+            .unwrap();
+        assert_eq!(existing.download_kbps, 100.0);
+    }
+
+    /// Update overwrites the colliding rows and inserts the new ones.
+    #[tokio::test]
+    async fn import_update_strategy_overwrites_existing() {
+        use crate::DuplicateStrategy;
+
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.measurements();
+
+        repo.record_with_timestamp("2026-07-20T00:00:00.000Z", 100.0, 1.0, 1.0, None, None)
+            .await
+            .unwrap();
+
+        let rows = vec![
+            nm("2026-07-20T00:00:00.000Z", 999.0), // existing -> updated
+            nm("2026-07-20T00:00:01.000Z", 200.0), // new -> inserted
+        ];
+
+        let outcome = repo
+            .import_all(&rows, DuplicateStrategy::Update)
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.inserted, 1);
+        assert_eq!(outcome.updated, 1);
+        assert_eq!(outcome.skipped, 0);
+        assert_eq!(repo.history(None).await.unwrap().len(), 2);
+
+        let updated = repo
+            .history(None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|m| m.timestamp == "2026-07-20T00:00:00.000Z")
+            .unwrap();
+        assert_eq!(
+            updated.download_kbps, 999.0,
+            "the row should be overwritten"
+        );
+    }
+
+    /// A duplicate WITHIN the file is treated the same as a DB collision.
+    #[tokio::test]
+    async fn import_error_strategy_catches_within_file_duplicates() {
+        use crate::DuplicateStrategy;
+
+        let db = Database::connect_in_memory().await.unwrap();
+        let repo = db.measurements();
+
+        let rows = vec![
+            nm("2026-07-20T00:00:00.000Z", 100.0),
+            nm("2026-07-20T00:00:00.000Z", 200.0),
+        ];
+
+        let err = repo
+            .import_all(&rows, DuplicateStrategy::Error)
+            .await
+            .expect_err("a within-file duplicate must be rejected");
+        assert!(err.downcast_ref::<crate::DuplicateTimestamp>().is_some());
+        assert_eq!(repo.history(None).await.unwrap().len(), 0);
+    }
+
+    /// With no collisions, every strategy inserts everything.
+    #[tokio::test]
+    async fn import_with_no_duplicates_inserts_all() {
+        use crate::DuplicateStrategy;
+
+        for strategy in [
+            DuplicateStrategy::Error,
+            DuplicateStrategy::Skip,
+            DuplicateStrategy::Update,
+        ] {
+            let db = Database::connect_in_memory().await.unwrap();
+            let repo = db.measurements();
+
+            let rows = vec![
+                nm("2026-07-20T00:00:00.000Z", 100.0),
+                nm("2026-07-20T00:00:01.000Z", 200.0),
+            ];
+            let outcome = repo.import_all(&rows, strategy).await.unwrap();
+            assert_eq!(outcome.inserted, 2, "{strategy:?}");
+            assert_eq!(repo.history(None).await.unwrap().len(), 2);
+        }
+    }
+
     /// A batch that fails partway must leave the table untouched. One INSERT
     /// per row with no transaction left earlier rows committed with no
     /// rollback and no indication of how far it had got.
@@ -285,7 +549,9 @@ mod tests {
             good("2026-07-20T00:00:00.000Z"),
             good("2026-07-20T00:00:01.000Z"),
         ];
-        repo.import_all(&rows).await.unwrap();
+        repo.import_all(&rows, crate::DuplicateStrategy::Error)
+            .await
+            .unwrap();
         assert_eq!(repo.history(None).await.unwrap().len(), 2);
 
         // Now attempt a batch where the second row is invalid.
@@ -299,7 +565,9 @@ mod tests {
             plan_id: None,
         });
         // NaN round-trips through SQLite as NULL, which violates NOT NULL.
-        let result = repo.import_all(&rows).await;
+        let result = repo
+            .import_all(&rows, crate::DuplicateStrategy::Error)
+            .await;
 
         if result.is_err() {
             assert_eq!(

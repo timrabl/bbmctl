@@ -105,10 +105,36 @@ pub struct ExportArgs {
     pub output: Option<String>,
 }
 
+/// How `history import` treats a row whose timestamp already exists.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnDuplicate {
+    /// Reject the whole import (default).
+    #[default]
+    Error,
+    /// Skip colliding rows, import the rest.
+    Skip,
+    /// Overwrite existing rows with the imported values.
+    Update,
+}
+
+impl From<OnDuplicate> for bbmctl_database::DuplicateStrategy {
+    fn from(v: OnDuplicate) -> Self {
+        match v {
+            OnDuplicate::Error => Self::Error,
+            OnDuplicate::Skip => Self::Skip,
+            OnDuplicate::Update => Self::Update,
+        }
+    }
+}
+
 #[derive(Args, Clone)]
 pub struct ImportArgs {
     /// CSV file to import
     pub file: String,
+
+    /// What to do when a row's timestamp already exists in the database
+    #[arg(long, value_enum, default_value_t = OnDuplicate::Error)]
+    pub on_duplicate: OnDuplicate,
 }
 
 #[derive(Args, Clone)]

@@ -23,5 +23,7 @@ mod measurement;
 mod settings;
 
 pub use campaign::CampaignRepo;
-pub use measurement::{MeasurementRepo, NewMeasurement};
+pub use measurement::{
+    DuplicateStrategy, DuplicateTimestamp, ImportOutcome, MeasurementRepo, NewMeasurement,
+};
 pub use settings::SettingsRepo;

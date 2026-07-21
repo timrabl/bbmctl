@@ -61,6 +61,8 @@ impl MeasurementCsvRow {
 /// A row parsed from an import file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportRow {
+    /// 1-based line number in the source file, for error messages.
+    pub line: usize,
     pub timestamp: String,
     pub download_kbps: f64,
     pub upload_kbps: f64,
@@ -152,6 +154,7 @@ impl ImportRow {
         };
 
         Ok(Self {
+            line,
             timestamp,
             download_kbps: number("download_kbps")?,
             upload_kbps: number("upload_kbps")?,

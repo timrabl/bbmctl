@@ -139,11 +139,34 @@ pub async fn run(command: HistoryCommands, config: &ResolvedConfig, db: &Databas
                 );
             }
 
-            let count = rows.len() as u64;
             let to_insert: Vec<bbmctl_database::NewMeasurement> =
                 rows.iter().map(Into::into).collect();
-            db.measurements().import_all(&to_insert).await?;
-            info!("imported {count} measurements");
+
+            let outcome = match db
+                .measurements()
+                .import_all(&to_insert, args.on_duplicate.into())
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(e) => {
+                    // Turn the row index in a duplicate error into the source
+                    // line number the user can actually find.
+                    if let Some(dup) = e.downcast_ref::<bbmctl_database::DuplicateTimestamp>() {
+                        let line = rows[dup.index].line;
+                        anyhow::bail!("{}: line {line}: {dup}", args.file);
+                    }
+                    return Err(e);
+                }
+            };
+
+            let mut parts = vec![format!("{} imported", outcome.inserted)];
+            if outcome.updated > 0 {
+                parts.push(format!("{} updated", outcome.updated));
+            }
+            if outcome.skipped > 0 {
+                parts.push(format!("{} skipped (already present)", outcome.skipped));
+            }
+            info!("{}", parts.join(", "));
         }
         HistoryCommands::Trend(args) => {
             let measurements = if let Some(ref last) = args.last {
