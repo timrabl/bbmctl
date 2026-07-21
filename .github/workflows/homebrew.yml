@@ -3,14 +3,12 @@ name: Update Homebrew Formula
 on:
   release:
     types: [published]
-  # release-plz creates releases with GITHUB_TOKEN, and GitHub suppresses
-  # workflow-triggering events for token-driven actions -- so the trigger
-  # above does not fire for an automated release (see #30). This lets the
-  # formula be bumped by hand until release-plz uses a PAT.
+  # Kept as a manual re-run safety net even though release-plz now uses a PAT
+  # (see #30) and releases fire this workflow on their own.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to bump the formula to (e.g. v0.1.1)"
+        description: "Release tag to bump the formula to (e.g. v0.1.2)"
         required: true
 
 jobs:
@@ -19,10 +17,65 @@ jobs:
     if: "github.event_name == 'workflow_dispatch' || !github.event.release.prerelease"
     runs-on: ubuntu-latest
     steps:
-      - name: Update Homebrew formula
-        uses: dawidd6/action-homebrew-bump-formula@v8
+      - name: Determine tag and version
+        id: v
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the tap
+        uses: actions/checkout@v7
         with:
+          repository: timrabl/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          tap: timrabl/tap
-          formula: bbmctl
-          tag: ${{ inputs.tag || github.ref_name }}
+          path: tap
+
+      # This replaces dawidd6/action-homebrew-bump-formula, which cannot bump a
+      # multi-platform pre-built-binary formula: `brew bump-formula-pr` expects
+      # a single url/sha256, so it failed on every release (see #30). Rewriting
+      # the three sha256 values directly is deterministic and keeps the tap
+      # formula as the source of truth.
+      - name: Update the formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          formula=tap/Formula/bbmctl.rb
+
+          declare -A sha
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+            asset="bbmctl-${TAG}-${target}.tar.gz"
+            gh release download "$TAG" --repo "${{ github.repository }}" -p "$asset" -D dl
+            sha[$target]=$(sha256sum "dl/$asset" | cut -d' ' -f1)
+            echo "$target -> ${sha[$target]}"
+          done
+
+          # Bump the version embedded in every download URL.
+          sed -i "s|/v[0-9][0-9.]*/bbmctl-v[0-9][0-9.]*-|/v${VERSION}/bbmctl-v${VERSION}-|g" "$formula"
+
+          # Replace each sha256, keyed on the target in the url line above it.
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
+            sed -i "/-${target}.tar.gz/{n;s/sha256 \"[a-f0-9]*\"/sha256 \"${sha[$target]}\"/;}" "$formula"
+          done
+
+          echo "=== updated formula ==="
+          cat "$formula"
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd tap
+          if git diff --quiet; then
+            echo "formula already up to date, nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/bbmctl.rb
+          git commit -m "bbmctl: ${VERSION}"
+          git push
