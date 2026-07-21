@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/timrabl/bbmctl/compare/v0.1.2...v0.2.0) - 2026-07-21
+
+The published `bbm` library API is unchanged since 0.1.2; the entry below it is
+what release-plz records for crates.io. The version bump to 0.2.0 reflects the
+new CLI capability and the move to a stable database backend. As before, the
+`bbmctl` binaries attached to this release carry the changes that release-plz
+does not track (`bbmctl` and `bbmctl-database` are not published packages).
+
+### Testing
+
+- *(bbm)* assert graceful degradation in the live-API tests ([#47](https://github.com/timrabl/bbmctl/pull/47))
+
+### CLI (`bbmctl`)
+
+- `history import` gained `--on-duplicate <error|skip|update>` (default `error`)
+  to control what happens when an imported row's timestamp already exists.
+  Re-importing a file previously duplicated every row silently
+  ([#46](https://github.com/timrabl/bbmctl/pull/46)).
+
+### Dependencies
+
+- Moved `sea-orm` from the `2.0.0-rc.38` release candidate to the stable
+  **2.0.0** release, and dropped the exact version pin
+  ([#45](https://github.com/timrabl/bbmctl/pull/45)).
+
+### CI / Release
+
+- release-plz now creates releases with a PAT, so a release fires the binary,
+  `.deb`, and Homebrew workflows on its own instead of needing a manual trigger
+  ([#43](https://github.com/timrabl/bbmctl/pull/43)).
+- The Homebrew formula is now bumped by a deterministic step that rewrites the
+  version and per-platform checksums, replacing an action that could not handle
+  a multi-platform binary formula and failed on every release
+  ([#44](https://github.com/timrabl/bbmctl/pull/44)).
+
 ## [0.1.2](https://github.com/timrabl/bbmctl/compare/v0.1.1...v0.1.2) - 2026-07-20
 
 ### Bug Fixes

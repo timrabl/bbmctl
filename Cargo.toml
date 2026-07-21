@@ -7,7 +7,7 @@ resolver = "2"
 # `release = false`), which previously left bbmctl reporting 0.1.0 in a v0.1.1
 # release -- and made the .deb compare equal to a genuine 0.1.0 package.
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 authors = ["Tim Oliver Rabl <contact@timrabl.de>"]
 license = "MIT"
