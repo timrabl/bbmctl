@@ -12,4 +12,17 @@
 # There is no fixed upstream version, so this cannot be resolved by upgrading.
 # Re-evaluate if a MySQL/Postgres backend is ever added, at which point `rsa`
 # becomes genuinely reachable and this ignore must be removed.
-ignore = ["RUSTSEC-2023-0071"]
+#
+# RUSTSEC-2026-0235 -- out-of-bounds reads validating Rc/Arc in `rkyv` 0.7.
+#
+# Not exploitable here: `rkyv` is present in Cargo.lock but is NOT in our
+# dependency graph. `cargo tree -i rkyv --target all -e all` returns nothing.
+# It is an optional dependency of `rust_decimal` (pulled transitively through
+# sea-orm); the `rkyv` feature is never enabled, so no rkyv code is compiled.
+#
+# The fix requires rkyv >= 0.8.17, but rust_decimal 1.42 pins its optional
+# dependency to `^0.7`, so the vulnerable version cannot be upgraded away while
+# the feature stays off. Since nothing enables it, that is moot.
+# Re-evaluate when rust_decimal moves its optional rkyv dependency to 0.8, at
+# which point this ignore should be removed.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0235"]
