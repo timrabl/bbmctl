@@ -13,15 +13,15 @@ bbmctl-database = { path = "../bbmctl-database" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-comfy-table = "7"
+comfy-table = "8"
 csv = "1"
-dirs = "6"
+dirs = "7"
 env_logger = "0.11"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
-serde_yaml_ng = "0.10"
+serde-saphyr = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "signal"] }
 
 [package.metadata.deb]
