@@ -92,7 +92,7 @@ impl ConfigFile {
             Some(p) => {
                 let contents = std::fs::read_to_string(&p)
                     .with_context(|| format!("failed to read config: {}", p.display()))?;
-                let config: ConfigFile = serde_yaml_ng::from_str(&contents)
+                let config: ConfigFile = serde_saphyr::from_str(&contents)
                     .with_context(|| format!("failed to parse config: {}", p.display()))?;
                 log::debug!("loaded config from {}", p.display());
                 Ok(config)
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn empty_config() {
-        let config: ConfigFile = serde_yaml_ng::from_str("").unwrap();
+        let config: ConfigFile = serde_saphyr::from_str("").unwrap();
         let resolved = config.resolve(None).unwrap();
         assert!(resolved.provider.is_none());
         assert!(resolved.database.is_none());
@@ -182,7 +182,7 @@ default:
   plan: "8515"
   streams: 4
 "#;
-        let config: ConfigFile = serde_yaml_ng::from_str(yaml).unwrap();
+        let config: ConfigFile = serde_saphyr::from_str(yaml).unwrap();
         let resolved = config.resolve(None).unwrap();
         assert_eq!(resolved.provider, Some(437));
         assert_eq!(resolved.plan.as_deref(), Some("8515"));
@@ -202,7 +202,7 @@ profiles:
     provider: 251
     plan: "9001"
 "#;
-        let config: ConfigFile = serde_yaml_ng::from_str(yaml).unwrap();
+        let config: ConfigFile = serde_saphyr::from_str(yaml).unwrap();
         let resolved = config.resolve(Some("office")).unwrap();
         assert_eq!(resolved.provider, Some(251));
         assert_eq!(resolved.plan.as_deref(), Some("9001"));
@@ -287,7 +287,7 @@ mod strict_config_tests {
     fn misplaced_key_is_rejected() {
         let yaml = "default:\n  database: /tmp/somewhere.db\n";
 
-        let result: Result<ConfigFile, _> = serde_yaml_ng::from_str(yaml);
+        let result: Result<ConfigFile, _> = serde_saphyr::from_str(yaml);
 
         let err = result.expect_err("a key in the wrong section must be rejected, not ignored");
         assert!(
@@ -301,7 +301,7 @@ mod strict_config_tests {
     fn unknown_top_level_key_is_rejected() {
         let yaml = "databse: /tmp/typo.db\n";
 
-        let result: Result<ConfigFile, _> = serde_yaml_ng::from_str(yaml);
+        let result: Result<ConfigFile, _> = serde_saphyr::from_str(yaml);
 
         assert!(
             result.is_err(),
@@ -315,7 +315,7 @@ mod strict_config_tests {
         let yaml = "database: /tmp/ok.db\ndefault:\n  provider: 437\n";
 
         let config: ConfigFile =
-            serde_yaml_ng::from_str(yaml).expect("a well-formed config must parse");
+            serde_saphyr::from_str(yaml).expect("a well-formed config must parse");
 
         assert_eq!(config.database.as_deref(), Some("/tmp/ok.db"));
         assert_eq!(config.default.provider, Some(437));
