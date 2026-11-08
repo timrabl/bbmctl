@@ -171,8 +171,15 @@ impl BbmClient {
     }
 
     /// Fetch a single provider by ID.
+    ///
+    /// The API answers an unknown ID with HTTP 200 and an empty array rather
+    /// than a 404, so that case is mapped to a "not found" [`BbmError::Api`].
     pub async fn get_provider_by_id(&self, id: i64) -> Result<Provider> {
-        self.get_json(&format!("/api/provider/{id}")).await
+        let value: serde_json::Value = self.get_json(&format!("/api/provider/{id}")).await?;
+        if value.as_array().is_some_and(Vec::is_empty) {
+            return Err(BbmError::Api(format!("provider {id} not found")));
+        }
+        Ok(serde_json::from_value(value)?)
     }
 
     // -- Plan API --
@@ -285,6 +292,35 @@ mod tests {
 
         let inner = outcome.expect("client did not enforce its own timeout");
         assert!(inner.is_err(), "a silent server must surface as an error");
+    }
+
+    /// `/api/provider/{id}` answers an unknown ID with HTTP 200 and `[]`
+    /// instead of a 404. That must be a clean "not found" error, not a JSON
+    /// error from trying to read an empty array as a `Provider` (#36).
+    #[tokio::test]
+    async fn unknown_provider_id_is_not_found_error() {
+        let server = StubServer::serve_raw(http_response(200, "application/json", "[]")).await;
+        let client = BbmClient::with_base_url(&server.base_url);
+
+        let err = client
+            .get_provider_by_id(99999)
+            .await
+            .expect_err("an empty array must not parse as a provider");
+
+        assert!(
+            matches!(&err, BbmError::Api(msg) if msg.contains("99999") && msg.contains("not found")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn known_provider_id_parses() {
+        let body = r#"{"key":"7","operator":"10","company":"Teleco GmbH","value":"Teleco","istop":0,"hasPlans":1}"#;
+        let server = StubServer::serve_raw(http_response(200, "application/json", body)).await;
+        let client = BbmClient::with_base_url(&server.base_url);
+
+        let provider = client.get_provider_by_id(7).await.expect("valid provider");
+        assert_eq!(provider.key, "7");
     }
 
     /// A 404 is a client error and must not be retried.
