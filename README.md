@@ -83,6 +83,13 @@ Download the latest binary from [Releases](https://github.com/timrabl/bbmctl/rel
 brew install timrabl/tap/bbmctl
 ```
 
+### Scoop (Windows)
+
+```powershell
+scoop bucket add timrabl https://github.com/timrabl/scoop-bucket
+scoop install bbmctl
+```
+
 ### From source
 
 ```bash

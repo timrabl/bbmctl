@@ -1,0 +1,97 @@
+name: Update Scoop Manifest
+
+on:
+  release:
+    types: [published]
+  # Manual re-run safety net, same as homebrew.yml.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to bump the manifest to (e.g. v0.2.1)"
+        required: true
+
+jobs:
+  scoop:
+    name: Update Scoop manifest
+    if: "github.event_name == 'workflow_dispatch' || !github.event.release.prerelease"
+    runs-on: ubuntu-latest
+    env:
+      # A dedicated token scoped to timrabl/scoop-bucket is preferred. The tap
+      # token is the fallback for when one PAT covers both repositories.
+      BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Determine tag and version
+        id: v
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the bucket
+        uses: actions/checkout@v7
+        with:
+          repository: timrabl/scoop-bucket
+          token: ${{ env.BUCKET_TOKEN }}
+          path: bucket
+
+      # release-binaries.yml attaches the Windows zip after this workflow has
+      # already started, so wait for it instead of racing (see homebrew.yml).
+      - name: Wait for the release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="bbmctl-${TAG}-x86_64-pc-windows-msvc.zip"
+          for _ in $(seq 1 45); do
+            if gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' | grep -qx "$asset"; then
+              echo "release asset present"
+              exit 0
+            fi
+            echo "waiting for $asset..."
+            sleep 20
+          done
+          echo "::error::timed out waiting for $asset on $TAG"
+          exit 1
+
+      - name: Update the manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest=bucket/bucket/bbmctl.json
+          asset="bbmctl-${TAG}-x86_64-pc-windows-msvc.zip"
+
+          gh release download "$TAG" --repo "${{ github.repository }}" -p "$asset" -D dl
+          hash=$(sha256sum "dl/$asset" | cut -d' ' -f1)
+          url="https://github.com/${{ github.repository }}/releases/download/${TAG}/${asset}"
+          echo "$asset -> $hash"
+
+          jq --indent 4 \
+            --arg version "$VERSION" --arg url "$url" --arg hash "$hash" \
+            '.version = $version
+             | .architecture."64bit".url = $url
+             | .architecture."64bit".hash = $hash' \
+            "$manifest" > manifest.tmp
+          mv manifest.tmp "$manifest"
+
+          echo "=== updated manifest ==="
+          cat "$manifest"
+
+      - name: Commit and push
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd bucket
+          if git diff --quiet; then
+            echo "manifest already up to date, nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/bbmctl.json
+          git commit -m "bbmctl: ${VERSION}"
+          git push
