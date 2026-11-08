@@ -190,21 +190,43 @@ impl BbmClient {
             .await
     }
 
-    // -- Speed API --
+    // -- Speed API (removed upstream) --
 
     /// Fetch all speeds.
+    ///
+    /// `/api/speed` was removed upstream and now answers HTTP 404, so this
+    /// always returns [`BbmError::Api`].
+    #[deprecated(
+        since = "0.2.3",
+        note = "The endpoint was removed upstream and now returns HTTP 404. See #36."
+    )]
     pub async fn get_speeds(&self) -> Result<Vec<Speed>> {
         self.get_json("/api/speed").await
     }
 
     /// Fetch speeds for a specific provider.
+    ///
+    /// `/api/speed/{id}` was removed upstream and now answers HTTP 404, so
+    /// this always returns [`BbmError::Api`].
+    #[deprecated(
+        since = "0.2.3",
+        note = "The endpoint was removed upstream and now returns HTTP 404. See #36."
+    )]
     pub async fn get_speeds_by_provider_id(&self, id: i64) -> Result<Vec<Speed>> {
         self.get_json(&format!("/api/speed/{id}")).await
     }
 
-    // -- Statistics API --
+    // -- Statistics API (removed upstream) --
 
     /// Fetch live statistics as raw JSON.
+    ///
+    /// `/api/statistics` was removed upstream and now answers HTTP 404, so
+    /// this always returns [`BbmError::Api`]. Use
+    /// [`BbmClient::annual_reports`] for published report data instead.
+    #[deprecated(
+        since = "0.2.3",
+        note = "The endpoint was removed upstream and now returns HTTP 404. See #36. Use BbmClient::annual_reports instead."
+    )]
     pub async fn get_statistics(&self) -> Result<serde_json::Value> {
         self.get_json("/api/statistics").await
     }

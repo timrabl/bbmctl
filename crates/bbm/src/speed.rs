@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::intstr::InconsistentIntegerString;
 
+/// A speed tier as returned by the former `/api/speed` endpoints.
+///
+/// Those endpoints were removed upstream (see #36). The type is kept so the
+/// deprecated client methods still compile.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Speed {
     pub key: String,
@@ -31,6 +35,7 @@ pub struct Speed {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // the live tests still exercise the removed endpoints
 mod tests {
     use crate::client::BbmClient;
 
