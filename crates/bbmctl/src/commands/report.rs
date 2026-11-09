@@ -40,15 +40,17 @@ pub async fn run(command: ReportCommands) -> Result<()> {
             }
         }
         ReportCommands::Stats(args) => {
+            warn!("`report stats` is deprecated: the statistics endpoint was removed upstream and returns HTTP 404");
             let client = bbm::BbmClient::new();
-            match client.get_statistics().await {
+            #[allow(deprecated)]
+            let result = client.get_statistics().await;
+            match result {
                 Ok(stats) => {
                     let mut writer = make_writer(&args.list)?;
                     output::write_output(&mut writer, &[stats], &args.list.format)?;
                 }
                 Err(e) => {
                     warn!("could not fetch live statistics: {e}");
-                    info!("this endpoint may not be publicly available");
                     info!("use `report annual` for published report data instead");
                 }
             }

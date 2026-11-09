@@ -24,7 +24,7 @@ This project is **not affiliated** with the German government or the Bundesnetza
 - Plan comparison against contractual speed thresholds
 
 **CLI (`bbmctl`):**
-- Query providers, plans, and speeds from the API
+- Query providers and plans from the API
 - Run broadband speed tests with concurrent streams
 - Compare measured speeds against your ISP contract
 - Record measurements to a local SQLite database (SeaORM)

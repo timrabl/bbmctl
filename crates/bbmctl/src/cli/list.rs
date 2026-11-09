@@ -26,7 +26,7 @@ use super::ListArgs;
 pub enum ListCommands {
     /// List the available providers
     Providers(ProvidersArgs),
-    /// List the available speeds
+    /// Deprecated: list the available speeds (endpoint removed upstream)
     Speeds(SpeedsArgs),
     /// List plans for a provider
     Plans(PlansArgs),

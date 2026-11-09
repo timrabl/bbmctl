@@ -52,7 +52,8 @@ pub async fn run(command: ListCommands) -> Result<()> {
             output::write_output(&mut writer, &providers, &args.list.format)?;
         }
         ListCommands::Speeds(args) => {
-            warn!("speed endpoint is currently unstable — results may be unreliable");
+            warn!("`list speeds` is deprecated: the speed endpoint was removed upstream and returns HTTP 404");
+            #[allow(deprecated)]
             let speeds = match args.provider {
                 Some(id) => client.get_speeds_by_provider_id(id).await?,
                 None => client.get_speeds().await?,

@@ -26,7 +26,7 @@ use super::ListArgs;
 pub enum ReportCommands {
     /// Show Bundesnetzagentur annual report summaries
     Annual(ReportAnnualArgs),
-    /// Fetch live statistics from the API
+    /// Deprecated: fetch live statistics (endpoint removed upstream, use `annual`)
     Stats(ReportStatsArgs),
 }
 
